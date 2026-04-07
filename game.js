@@ -601,9 +601,11 @@ const Game = (() => {
             if (p.isJumping) {
                 const jElapsed = (now - p.jumpStartTime) / 1000;
                 const jProgress = jElapsed / CFG.JUMP_DURATION;
+                p.jumpProgress = Math.min(1, jProgress);
                 if (jProgress >= 1) {
                     p.isJumping = false;
                     p.jumpY = 0;
+                    p.jumpProgress = 0;
                 } else {
                     p.jumpY = CFG.JUMP_HEIGHT * Math.sin(Math.PI * jProgress);
                 }
