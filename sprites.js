@@ -3,6 +3,24 @@ const Sprites = (() => {
     const W = 12;
     const H = 18;
 
+    // --- Idle spritesheet (PNG extracted from reference art) ---
+    // These values are set by tools/extract_sprites.py output.
+    // Update if the spritesheet is regenerated with different dimensions.
+    const IDLE_FRAME_W     = 63;   // frame width in px (1x native)
+    const IDLE_FRAME_H     = 80;   // frame height in px (1x native)
+    const IDLE_FRAME_COUNT = 1;    // increase when multi-frame sheets are ready
+    const IDLE_FPS         = 8;    // animation speed (frames per second)
+
+    const idleSheets = {};
+    const idleSheetsLoaded = {};
+
+    (['blue', 'red']).forEach(pal => {
+        const img = new Image();
+        img.onload = () => { idleSheets[pal] = img; idleSheetsLoaded[pal] = true; };
+        img.onerror = () => { /* falls back to procedural sprite */ };
+        img.src = `assets/${pal}_idle.png`;
+    });
+
     const Palettes = {
         blue: {
             helmet: '#4466BB', helmetLight: '#5588DD', helmetDark: '#334499',
@@ -151,13 +169,29 @@ const Sprites = (() => {
     }
 
     function draw(ctx, x, y, paletteName, state, scale) {
+        ctx.imageSmoothingEnabled = false;
+
+        if (state === 'idle' && idleSheetsLoaded[paletteName]) {
+            const frame = IDLE_FRAME_COUNT > 1
+                ? Math.floor(Date.now() / (1000 / IDLE_FPS)) % IDLE_FRAME_COUNT
+                : 0;
+            ctx.drawImage(
+                idleSheets[paletteName],
+                frame * IDLE_FRAME_W, 0, IDLE_FRAME_W, IDLE_FRAME_H,
+                x, y, IDLE_FRAME_W, IDLE_FRAME_H
+            );
+            return;
+        }
+
         const s = scale || SCALE;
         const sprite = getSprite(paletteName, state);
-        ctx.imageSmoothingEnabled = false;
         ctx.drawImage(sprite, x, y, sprite.width * s, sprite.height * s);
     }
 
     function spriteSize(state, scale) {
+        if (state === 'idle' && idleSheetsLoaded['blue']) {
+            return { w: IDLE_FRAME_W, h: IDLE_FRAME_H };
+        }
         const s = scale || SCALE;
         const sprite = getSprite('blue', state || 'idle');
         return { w: sprite.width * s, h: sprite.height * s };
