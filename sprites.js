@@ -1,7 +1,6 @@
 const Sprites = (() => {
-    const SCALE = 4;
-    const W = 12;
-    const H = 18;
+    const SCALE = 1;
+    const ANIM_FPS = 12;
 
     const Palettes = {
         blue: {
@@ -20,8 +19,87 @@ const Sprites = (() => {
         },
     };
 
-    const cache = {};
+    const W_FALLBACK = 12;
+    const H_FALLBACK = 18;
+    const SCALE_FALLBACK = 4;
 
+    const sheets = {};
+    const fallbackCache = {};
+    let sheetsReady = false;
+
+    // ---- Spritesheet loading ----
+    const SHEET_DEFS = {
+        blue_idle: 'assets/blue_idle.png',
+        blue_jump: 'assets/blue_jump.png',
+        red_idle:  'assets/red_idle.png',
+        red_jump:  'assets/red_jump.png',
+    };
+
+    function extractFrames(img) {
+        const c = document.createElement('canvas');
+        c.width = img.width;
+        c.height = img.height;
+        const ctx = c.getContext('2d');
+        ctx.drawImage(img, 0, 0);
+        const data = ctx.getImageData(0, 0, img.width, img.height);
+        const pixels = data.data;
+        const w = img.width;
+        const h = img.height;
+
+        const colHas = new Uint8Array(w);
+        for (let x = 0; x < w; x++) {
+            for (let y = 0; y < h; y++) {
+                if (pixels[(y * w + x) * 4 + 3] > 0) {
+                    colHas[x] = 1;
+                    break;
+                }
+            }
+        }
+
+        const runs = [];
+        let start = -1;
+        for (let x = 0; x < w; x++) {
+            if (colHas[x] && start < 0) start = x;
+            else if (!colHas[x] && start >= 0) {
+                runs.push({ x: start, w: x - start });
+                start = -1;
+            }
+        }
+        if (start >= 0) runs.push({ x: start, w: w - start });
+
+        const frames = runs.filter(r => r.w > 4);
+
+        return frames.map(f => {
+            const fc = document.createElement('canvas');
+            fc.width = f.w;
+            fc.height = h;
+            fc.getContext('2d').drawImage(img, f.x, 0, f.w, h, 0, 0, f.w, h);
+            return fc;
+        });
+    }
+
+    function loadAllSheets() {
+        const entries = Object.entries(SHEET_DEFS);
+        let loaded = 0;
+        entries.forEach(([key, src]) => {
+            const img = new Image();
+            img.onload = () => {
+                sheets[key] = extractFrames(img);
+                loaded++;
+                if (loaded === entries.length) sheetsReady = true;
+            };
+            img.onerror = () => {
+                sheets[key] = null;
+                loaded++;
+                if (loaded === entries.length) sheetsReady = true;
+            };
+            img.src = src;
+        });
+    }
+
+    loadAllSheets();
+
+    // ---- Fallback programmatic sprites (used for 'hit' state) ----
     function makeCanvas(w, h) {
         const c = document.createElement('canvas');
         c.width = w; c.height = h;
@@ -34,134 +112,152 @@ const Sprites = (() => {
     }
 
     function buildIdle(p) {
-        const c = makeCanvas(W, H);
+        const c = makeCanvas(W_FALLBACK, H_FALLBACK);
         const ctx = c.getContext('2d');
-
-        // Helmet
         rect(ctx, 3, 0, 6, 1, p.helmetLight);
         rect(ctx, 2, 1, 8, 2, p.helmet);
         rect(ctx, 2, 3, 1, 1, p.helmetDark);
         rect(ctx, 9, 3, 1, 1, p.helmetDark);
         rect(ctx, 3, 3, 6, 1, p.visor);
         rect(ctx, 3, 4, 6, 1, p.helmetDark);
-        // Neck
         rect(ctx, 5, 5, 2, 1, p.skin);
-        // Cape
         rect(ctx, 0, 6, 2, 4, p.cape);
         rect(ctx, 0, 10, 2, 1, p.capeDark);
-        // Shoulders
         rect(ctx, 1, 6, 10, 1, p.armorLight);
-        // Body
         rect(ctx, 3, 7, 6, 4, p.armor);
-        // Arms
         rect(ctx, 1, 7, 2, 2, p.armorLight);
         rect(ctx, 9, 7, 2, 2, p.armorLight);
         rect(ctx, 1, 9, 2, 1, p.skin);
         rect(ctx, 9, 9, 2, 1, p.skin);
-        // Belt
         rect(ctx, 3, 11, 6, 1, p.belt);
         rect(ctx, 5, 11, 2, 1, p.buckle);
-        // Legs
         rect(ctx, 3, 12, 3, 3, p.armorDark);
         rect(ctx, 6, 12, 3, 3, p.armorDark);
-        // Boots
         rect(ctx, 2, 15, 4, 2, p.boots);
         rect(ctx, 6, 15, 4, 2, p.boots);
         rect(ctx, 2, 17, 4, 1, p.bootsDark);
         rect(ctx, 6, 17, 4, 1, p.bootsDark);
-
         return c;
     }
 
     function buildJump(p) {
-        const c = makeCanvas(W, H);
+        const c = makeCanvas(W_FALLBACK, H_FALLBACK);
         const ctx = c.getContext('2d');
-
-        // Helmet
         rect(ctx, 3, 0, 6, 1, p.helmetLight);
         rect(ctx, 2, 1, 8, 2, p.helmet);
         rect(ctx, 2, 3, 1, 1, p.helmetDark);
         rect(ctx, 9, 3, 1, 1, p.helmetDark);
         rect(ctx, 3, 3, 6, 1, p.visor);
         rect(ctx, 3, 4, 6, 1, p.helmetDark);
-        // Arms raised
         rect(ctx, 1, 3, 2, 2, p.armorLight);
         rect(ctx, 9, 3, 2, 2, p.armorLight);
         rect(ctx, 1, 2, 2, 1, p.skin);
         rect(ctx, 9, 2, 2, 1, p.skin);
-        // Cape upward
         rect(ctx, 0, 5, 1, 3, p.cape);
         rect(ctx, 0, 8, 1, 1, p.capeDark);
-        // Shoulders
         rect(ctx, 1, 6, 10, 1, p.armorLight);
-        // Body
         rect(ctx, 3, 7, 6, 4, p.armor);
-        // Belt
         rect(ctx, 3, 11, 6, 1, p.belt);
         rect(ctx, 5, 11, 2, 1, p.buckle);
-        // Legs together
         rect(ctx, 4, 12, 4, 3, p.armorDark);
-        // Boots together
         rect(ctx, 3, 15, 6, 2, p.boots);
         rect(ctx, 3, 17, 6, 1, p.bootsDark);
-
         return c;
     }
 
     function buildHit(p) {
-        const c = makeCanvas(W + 2, H);
+        const c = makeCanvas(W_FALLBACK + 2, H_FALLBACK);
         const ctx = c.getContext('2d');
-
-        // Shifted right and leaning
         rect(ctx, 4, 0, 6, 1, p.helmetLight);
         rect(ctx, 3, 1, 8, 2, p.helmet);
         rect(ctx, 4, 3, 6, 1, p.visor);
         rect(ctx, 4, 4, 6, 1, p.helmetDark);
-        // Body shifted
         rect(ctx, 2, 5, 10, 1, p.armorLight);
         rect(ctx, 4, 6, 6, 4, p.armor);
-        // Arms flung out
         rect(ctx, 0, 6, 3, 1, p.armorLight);
         rect(ctx, 0, 7, 1, 1, p.skin);
         rect(ctx, 10, 6, 3, 1, p.armorLight);
         rect(ctx, 12, 7, 1, 1, p.skin);
-        // Belt
         rect(ctx, 4, 10, 6, 1, p.belt);
-        // Legs
         rect(ctx, 4, 11, 3, 3, p.armorDark);
         rect(ctx, 7, 11, 3, 3, p.armorDark);
-        // Boots
         rect(ctx, 3, 14, 4, 2, p.boots);
         rect(ctx, 7, 14, 4, 2, p.boots);
         rect(ctx, 3, 16, 4, 1, p.bootsDark);
         rect(ctx, 7, 16, 4, 1, p.bootsDark);
-
         return c;
     }
 
-    function getSprite(paletteName, state) {
+    function getFallback(paletteName, state) {
         const key = paletteName + '_' + state;
-        if (!cache[key]) {
+        if (!fallbackCache[key]) {
             const p = Palettes[paletteName];
-            if (state === 'idle') cache[key] = buildIdle(p);
-            else if (state === 'jump') cache[key] = buildJump(p);
-            else if (state === 'hit') cache[key] = buildHit(p);
+            if (state === 'idle') fallbackCache[key] = buildIdle(p);
+            else if (state === 'jump') fallbackCache[key] = buildJump(p);
+            else if (state === 'hit') fallbackCache[key] = buildHit(p);
         }
-        return cache[key];
+        return fallbackCache[key];
     }
 
-    function draw(ctx, x, y, paletteName, state, scale) {
-        const s = scale || SCALE;
-        const sprite = getSprite(paletteName, state);
+    // ---- Public API ----
+    function getFrame(paletteName, state, frameIdx) {
+        if (state === 'hit') {
+            return getScaledHitFallback(paletteName);
+        }
+
+        const key = paletteName + '_' + state;
+        const frameList = sheets[key];
+        if (frameList && frameList.length > 0) {
+            const i = (frameIdx || 0) % frameList.length;
+            return frameList[i];
+        }
+        return getFallback(paletteName, state);
+    }
+
+    function getScaledHitFallback(paletteName) {
+        const key = paletteName + '_hit_scaled';
+        if (fallbackCache[key]) return fallbackCache[key];
+
+        const raw = getFallback(paletteName, 'hit');
+        if (!sheetsReady) return raw;
+
+        const idleFrame = getFrame(paletteName, 'idle', 0);
+        const targetH = idleFrame.height;
+        const s = targetH / raw.height;
+        const c = document.createElement('canvas');
+        c.width = Math.round(raw.width * s);
+        c.height = Math.round(raw.height * s);
+        const ctx = c.getContext('2d');
         ctx.imageSmoothingEnabled = false;
-        ctx.drawImage(sprite, x, y, sprite.width * s, sprite.height * s);
+        ctx.drawImage(raw, 0, 0, c.width, c.height);
+        fallbackCache[key] = c;
+        return c;
     }
 
-    function spriteSize(state, scale) {
-        const s = scale || SCALE;
-        const sprite = getSprite('blue', state || 'idle');
-        return { w: sprite.width * s, h: sprite.height * s };
+    function frameCount(paletteName, state) {
+        if (state === 'hit') return 1;
+        const key = paletteName + '_' + state;
+        const frameList = sheets[key];
+        return (frameList && frameList.length > 0) ? frameList.length : 1;
     }
 
-    return { draw, spriteSize, Palettes, SCALE, W, H };
+    function draw(ctx, x, y, paletteName, state, scaleOverride) {
+        const now = performance.now();
+        const totalFrames = frameCount(paletteName, state);
+        const frameIdx = totalFrames > 1
+            ? Math.floor((now / 1000) * ANIM_FPS) % totalFrames
+            : 0;
+        const frame = getFrame(paletteName, state, frameIdx);
+        const s = scaleOverride || SCALE;
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(frame, x, y, frame.width * s, frame.height * s);
+    }
+
+    function spriteSize(state, scaleOverride) {
+        const s = scaleOverride || SCALE;
+        const frame = getFrame('blue', state || 'idle', 0);
+        return { w: frame.width * s, h: frame.height * s };
+    }
+
+    return { draw, spriteSize, frameCount, Palettes, SCALE, W: W_FALLBACK, H: H_FALLBACK };
 })();
