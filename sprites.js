@@ -25,6 +25,9 @@ const Sprites = (() => {
     const JUMP_FRAME_W     = 51;
     const JUMP_FRAME_H     = 58;
     const JUMP_FRAME_COUNT = 20;
+    // Scale jump frames up so they display at the same height as idle frames
+    const JUMP_DISPLAY_H = IDLE_FRAME_H;
+    const JUMP_DISPLAY_W = Math.round(JUMP_FRAME_W * (IDLE_FRAME_H / JUMP_FRAME_H));
 
     const jumpSheets = {};
     const jumpSheetsLoaded = {};
@@ -206,7 +209,7 @@ const Sprites = (() => {
             ctx.drawImage(
                 jumpSheets[paletteName],
                 frame * JUMP_FRAME_W, 0, JUMP_FRAME_W, JUMP_FRAME_H,
-                x, y, JUMP_FRAME_W, JUMP_FRAME_H
+                x, y, JUMP_DISPLAY_W, JUMP_DISPLAY_H
             );
             return;
         }
@@ -221,7 +224,7 @@ const Sprites = (() => {
             return { w: IDLE_FRAME_W, h: IDLE_FRAME_H };
         }
         if (state === 'jump' && jumpSheetsLoaded['blue']) {
-            return { w: JUMP_FRAME_W, h: JUMP_FRAME_H };
+            return { w: JUMP_DISPLAY_W, h: JUMP_DISPLAY_H };
         }
         const s = scale || SCALE;
         const sprite = getSprite('blue', state || 'idle');
