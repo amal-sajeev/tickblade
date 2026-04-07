@@ -127,20 +127,11 @@ const Game = (() => {
 
     // ---- Core game actions ----
     function handleJump(playerIdx) {
-        if (phase !== 'playing' && !impactCam.active) return;
+        if (phase !== 'playing' || impactCam.active) return;
         const p = players[playerIdx];
         if (!p) return;
 
         const now = performance.now();
-
-        if (impactCam.active && impactCam.phase === 'approach' && impactCam.playerIdx === playerIdx) {
-            const camDuration = now - impactCam.startTime;
-            gameStartTime += camDuration;
-            impactCam.active = false;
-            impactCam.phase = 'none';
-        } else if (impactCam.active) {
-            return;
-        }
         if (now - p.lastPressTime < CFG.PRESS_COOLDOWN * 1000) return;
         p.lastPressTime = now;
 
@@ -233,7 +224,6 @@ const Game = (() => {
             p.hitTimer = 0.7;
             shakeTimer = 0.15;
             SFX.playHit();
-
             spawnBloodSpurt(p);
 
             if (mode === 'online') {
@@ -326,33 +316,11 @@ const Game = (() => {
     function easeOutQuad(t) { return 1 - (1 - t) * (1 - t); }
     function easeInOutQuad(t) { return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; }
 
-    function checkForImpactCam(now) {
-        if (impactCam.active) return;
-        if (mode === 'online') return;
-
-        const nextBeat = lastResolvedBeat + 1;
-        if (nextBeat < 1) return;
-
-        const nextBeatTime = beatTimeMs(nextBeat);
-        const timeUntilBeat = (nextBeatTime - now) / 1000;
-
-        if (timeUntilBeat > 0.22 || timeUntilBeat < 0.03) return;
-
-        for (let i = 0; i < players.length; i++) {
-            const p = players[i];
-            if (p.resolvedBeats.has(nextBeat)) continue;
-            if (p.hits < CFG.MAX_HITS - 1) continue;
-            if (!wasAirborneAtBeat(p, nextBeat)) {
-                startImpactCam(i, nextBeat, now);
-                return;
-            }
-        }
-    }
-
-    function startImpactCam(playerIdx, beatIdx, now) {
+    function startImpactCam(playerIdx, beatIdx) {
+        const now = performance.now();
         impactCam = {
             active: true,
-            phase: 'approach',
+            phase: 'zoomin',
             startTime: now,
             phaseTime: now,
             playerIdx,
@@ -371,16 +339,14 @@ const Game = (() => {
         const elapsed = (now - impactCam.phaseTime) / 1000;
 
         switch (impactCam.phase) {
-            case 'approach': {
-                const DUR = 0.8;
+            case 'zoomin': {
+                const DUR = 0.25;
                 const t = Math.min(1, elapsed / DUR);
-                impactCam.angle = impactCam.startAngle * (1 - easeInQuad(t));
                 impactCam.zoom = 1 + 1.5 * easeInOutQuad(t);
                 if (t >= 1) {
                     impactCam.phase = 'impact';
                     impactCam.phaseTime = now;
-                    impactCam.angle = 0;
-                    triggerImpact(now);
+                    spawnImpactEffects();
                 }
                 break;
             }
@@ -396,7 +362,7 @@ const Game = (() => {
                 break;
             }
             case 'aftermath': {
-                const DUR = 1.2;
+                const DUR = 1.0;
                 const t = Math.min(1, elapsed / DUR);
                 impactCam.zoom = 2.5 - 0.5 * easeOutQuad(t);
                 updateRagdoll(dt);
@@ -408,7 +374,7 @@ const Game = (() => {
                 break;
             }
             case 'zoomout': {
-                const DUR = 0.5;
+                const DUR = 0.4;
                 const t = Math.min(1, elapsed / DUR);
                 impactCam.zoom = 2.0 - 1.0 * easeInOutQuad(t);
                 updateRagdoll(dt);
@@ -420,51 +386,14 @@ const Game = (() => {
             }
         }
 
-        pendulumAngle = impactCam.angle;
-
         if (shakeTimer > 0) shakeTimer -= dt;
     }
 
-    function triggerImpact(now) {
-        const beatIdx = impactCam.beatIdx;
-        const p = players[impactCam.playerIdx];
-
-        p.resolvedBeats.add(beatIdx);
-        p.hits++;
-        p.streak = 0;
-        p.judgmentText = 'MISS';
-        p.judgmentTimer = 1.0;
-        p.hitTimer = 0;
-        impactCam.hitApplied = true;
-        SFX.playHit();
-
-        players.forEach((other, idx) => {
-            if (idx === impactCam.playerIdx) return;
-            if (other.resolvedBeats.has(beatIdx)) return;
-            if (wasAirborneAtBeat(other, beatIdx)) {
-                other.resolvedBeats.add(beatIdx);
-                other.score += 1;
-                other.streak++;
-                other.bestStreak = Math.max(other.bestStreak, other.streak);
-                other.judgmentText = 'GOOD';
-                other.judgmentTimer = 1.0;
-            } else {
-                other.resolvedBeats.add(beatIdx);
-                other.hits++;
-                other.streak = 0;
-                other.judgmentText = 'MISS';
-                other.judgmentTimer = 1.0;
-                other.hitTimer = 0.7;
-            }
-        });
-
-        lastResolvedBeat = Math.max(lastResolvedBeat, beatIdx);
-
+    function spawnImpactEffects() {
         const arenaW = (mode === 'practice') ? Renderer.CW : Renderer.CW / 2;
         const arenaX = (impactCam.playerIdx === 1) ? Renderer.CW / 2 : 0;
         const cx = arenaX + arenaW / 2;
         const charSize = Sprites.spriteSize('idle');
-
         const bladeDir = impactCam.startAngle >= 0 ? 1 : -1;
 
         impactCam.ragdoll = {
@@ -627,6 +556,25 @@ const Game = (() => {
         if (currentBeatInt > lastTickBeat) {
             lastTickBeat = currentBeatInt;
             SFX.playTick();
+
+            // Fatal hit detection at the exact frame the blade touches the character
+            if (mode !== 'online' && currentBeatInt > 0) {
+                for (let i = 0; i < players.length; i++) {
+                    const p = players[i];
+                    if (p.hits < CFG.MAX_HITS - 1) continue;
+                    if (p.resolvedBeats.has(currentBeatInt)) continue;
+                    if (!wasAirborneAtBeat(p, currentBeatInt)) {
+                        p.resolvedBeats.add(currentBeatInt);
+                        p.hits++;
+                        p.streak = 0;
+                        p.judgmentText = 'MISS';
+                        p.judgmentTimer = 1.0;
+                        SFX.playHit();
+                        startImpactCam(i, currentBeatInt);
+                        return;
+                    }
+                }
+            }
         }
 
         // Resolve past beats
@@ -638,10 +586,6 @@ const Game = (() => {
                 if (checkWin()) return;
             }
         }
-
-        // Check for imminent misses (Peggle-style slow-mo)
-        checkForImpactCam(now);
-        if (impactCam.active) return;
 
         // BPM ramp
         if (currentBeatInt > 0 && currentBeatInt % CFG.BEATS_PER_LEVEL === 0) {
@@ -786,7 +730,7 @@ const Game = (() => {
     // ---- Input ----
     function setupInput() {
         document.addEventListener('keydown', (e) => {
-            if (phase !== 'playing' && !(impactCam.active && impactCam.phase === 'approach')) return;
+            if (phase !== 'playing') return;
             if (e.repeat) return;
 
             const key = e.key;
@@ -806,7 +750,7 @@ const Game = (() => {
         const canvas = $('game-canvas');
         canvas.addEventListener('touchstart', (e) => {
             e.preventDefault();
-            if (phase !== 'playing' && !(impactCam.active && impactCam.phase === 'approach')) return;
+            if (phase !== 'playing') return;
             if (mode === 'local') {
                 const touch = e.touches[0];
                 const rect = canvas.getBoundingClientRect();
