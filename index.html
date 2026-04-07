@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#0a0a1a">
+    <title>Tickblade - Pendulum Rhythm Battle</title>
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='24' font-size='24'>&#9876;</text></svg>">
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="game-container">
+        <canvas id="game-canvas" width="800" height="500"></canvas>
+
+        <div id="hud" class="hidden">
+            <div id="hud-p1" class="hud-side">
+                <div class="player-label">P1</div>
+                <div class="hearts" id="hearts-p1"></div>
+                <div class="score-row">
+                    <span class="score-label">SCORE</span>
+                    <span class="score-value" id="score-p1">0</span>
+                </div>
+                <div class="streak-row" id="streak-p1"></div>
+            </div>
+            <div id="hud-center">
+                <span id="bpm-display">60 BPM</span>
+            </div>
+            <div id="hud-p2" class="hud-side">
+                <div class="player-label">P2</div>
+                <div class="hearts" id="hearts-p2"></div>
+                <div class="score-row">
+                    <span class="score-label">SCORE</span>
+                    <span class="score-value" id="score-p2">0</span>
+                </div>
+                <div class="streak-row" id="streak-p2"></div>
+            </div>
+        </div>
+
+        <div id="menu-screen">
+            <h1 class="title">TICKBLADE</h1>
+            <p class="subtitle">Pendulum Rhythm Battle</p>
+            <div class="menu-buttons">
+                <button class="btn" id="btn-practice">PRACTICE</button>
+                <button class="btn" id="btn-local">LOCAL 1v1</button>
+                <button class="btn" id="btn-online">ONLINE 1v1</button>
+            </div>
+            <div class="controls-hint">
+                <p>P1: <kbd>SPACE</kbd> or <kbd>W</kbd></p>
+                <p>P2: <kbd>UP</kbd> or <kbd>ENTER</kbd></p>
+            </div>
+        </div>
+
+        <div id="lobby-screen" class="hidden">
+            <h2 class="lobby-title">ONLINE BATTLE</h2>
+            <div class="lobby-panel">
+                <button class="btn" id="btn-create-room">CREATE ROOM</button>
+                <div id="room-code-display" class="hidden">
+                    <p class="room-label">ROOM CODE</p>
+                    <div class="room-code" id="room-code"></div>
+                    <p class="waiting-text">Waiting for opponent...</p>
+                </div>
+            </div>
+            <div class="lobby-divider">OR</div>
+            <div class="lobby-panel">
+                <input type="text" id="join-code-input" class="code-input" placeholder="ENTER CODE" maxlength="6" spellcheck="false" autocomplete="off">
+                <button class="btn" id="btn-join-room">JOIN ROOM</button>
+            </div>
+            <div id="lobby-status"></div>
+            <button class="btn btn-small" id="btn-lobby-back">BACK</button>
+        </div>
+
+        <div id="results-screen" class="hidden">
+            <h2 class="results-title" id="results-title">GAME OVER</h2>
+            <div id="results-body"></div>
+            <div class="menu-buttons">
+                <button class="btn" id="btn-play-again">PLAY AGAIN</button>
+                <button class="btn btn-small" id="btn-back-menu">MENU</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+    <script src="sprites.js"></script>
+    <script src="audio.js"></script>
+    <script src="multiplayer.js"></script>
+    <script src="renderer.js"></script>
+    <script src="game.js"></script>
+</body>
+</html>
