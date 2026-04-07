@@ -204,7 +204,7 @@ const Renderer = (() => {
             ctx.globalAlpha = 0.6;
         }
 
-        Sprites.draw(ctx, charX, charY, palette, state, null, player.jumpProgress || 0);
+        Sprites.draw(ctx, charX, charY, palette, state);
         ctx.globalAlpha = 1;
 
         // Mini blood spurt

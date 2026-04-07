@@ -3,42 +3,6 @@ const Sprites = (() => {
     const W = 12;
     const H = 18;
 
-    // --- Idle spritesheet (PNG extracted from reference art) ---
-    // These values are set by tools/extract_sprites.py output.
-    // Update if the spritesheet is regenerated with different dimensions.
-    const IDLE_FRAME_W     = 64;   // frame width in px
-    const IDLE_FRAME_H     = 62;   // frame height in px
-    const IDLE_FRAME_COUNT = 16;   // 16-frame idle breathing animation
-    const IDLE_FPS         = 10;   // animation speed (frames per second)
-
-    const idleSheets = {};
-    const idleSheetsLoaded = {};
-
-    (['blue', 'red']).forEach(pal => {
-        const img = new Image();
-        img.onload = () => { idleSheets[pal] = img; idleSheetsLoaded[pal] = true; };
-        img.onerror = () => { /* falls back to procedural sprite */ };
-        img.src = `assets/${pal}_idle.png`;
-    });
-
-    // --- Jump spritesheet ---
-    const JUMP_FRAME_W     = 51;
-    const JUMP_FRAME_H     = 58;
-    const JUMP_FRAME_COUNT = 20;
-    // Scale jump frames up so they display at the same height as idle frames
-    const JUMP_DISPLAY_H = IDLE_FRAME_H;
-    const JUMP_DISPLAY_W = Math.round(JUMP_FRAME_W * (IDLE_FRAME_H / JUMP_FRAME_H));
-
-    const jumpSheets = {};
-    const jumpSheetsLoaded = {};
-
-    (['blue', 'red']).forEach(pal => {
-        const img = new Image();
-        img.onload = () => { jumpSheets[pal] = img; jumpSheetsLoaded[pal] = true; };
-        img.onerror = () => { /* falls back to procedural sprite */ };
-        img.src = `assets/${pal}_jump.png`;
-    });
-
     const Palettes = {
         blue: {
             helmet: '#4466BB', helmetLight: '#5588DD', helmetDark: '#334499',
@@ -186,46 +150,14 @@ const Sprites = (() => {
         return cache[key];
     }
 
-    function draw(ctx, x, y, paletteName, state, scale, jumpProgress) {
-        ctx.imageSmoothingEnabled = false;
-
-        if (state === 'idle' && idleSheetsLoaded[paletteName]) {
-            const frame = IDLE_FRAME_COUNT > 1
-                ? Math.floor(Date.now() / (1000 / IDLE_FPS)) % IDLE_FRAME_COUNT
-                : 0;
-            ctx.drawImage(
-                idleSheets[paletteName],
-                frame * IDLE_FRAME_W, 0, IDLE_FRAME_W, IDLE_FRAME_H,
-                x, y, IDLE_FRAME_W, IDLE_FRAME_H
-            );
-            return;
-        }
-
-        if (state === 'jump' && jumpSheetsLoaded[paletteName]) {
-            const frame = Math.min(
-                JUMP_FRAME_COUNT - 1,
-                Math.floor((jumpProgress || 0) * JUMP_FRAME_COUNT)
-            );
-            ctx.drawImage(
-                jumpSheets[paletteName],
-                frame * JUMP_FRAME_W, 0, JUMP_FRAME_W, JUMP_FRAME_H,
-                x, y, JUMP_DISPLAY_W, JUMP_DISPLAY_H
-            );
-            return;
-        }
-
+    function draw(ctx, x, y, paletteName, state, scale) {
         const s = scale || SCALE;
         const sprite = getSprite(paletteName, state);
+        ctx.imageSmoothingEnabled = false;
         ctx.drawImage(sprite, x, y, sprite.width * s, sprite.height * s);
     }
 
     function spriteSize(state, scale) {
-        if (state === 'idle' && idleSheetsLoaded['blue']) {
-            return { w: IDLE_FRAME_W, h: IDLE_FRAME_H };
-        }
-        if (state === 'jump' && jumpSheetsLoaded['blue']) {
-            return { w: JUMP_DISPLAY_W, h: JUMP_DISPLAY_H };
-        }
         const s = scale || SCALE;
         const sprite = getSprite('blue', state || 'idle');
         return { w: sprite.width * s, h: sprite.height * s };
