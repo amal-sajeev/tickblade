@@ -80,7 +80,7 @@ const Game = (() => {
     // has half-width charHalf. Without correction the blade visually cuts
     // into the character well before the beat fires. We advance the
     // pendulum so its leading edge just reaches the character at beat time.
-    const BLADE_HALF = 36;
+    const BLADE_HALF = 32;
     let pendulumLead = 0;
 
     function computePendulumLead() {
@@ -245,6 +245,7 @@ const Game = (() => {
             p.hitTimer = 0.7;
             shakeTimer = 0.15;
             SFX.playHit();
+            Renderer.addBladeBlood();
             spawnBloodSpurt(p);
 
             if (mode === 'online') {
@@ -643,6 +644,7 @@ const Game = (() => {
                     p.judgmentText = 'MISS';
                     p.judgmentTimer = 1.0;
                     SFX.playHit();
+                    Renderer.addBladeBlood();
 
                     if (mode === 'online') {
                         MP.send({ type: 'action', beat: currentBeatInt, judgment: 'MISS',
@@ -811,6 +813,8 @@ const Game = (() => {
 
         pendulumAngle = 0;
         shakeTimer = 0;
+        Renderer.resetRope();
+        Renderer.resetBladeBlood();
         impactCam = { active: false, phase: 'none', startTime: 0, phaseTime: 0,
             playerIdx: -1, beatIdx: -1, startAngle: 0, angle: 0, zoom: 1,
             ragdoll: null, particles: [], splatters: [], hitApplied: false };
@@ -1065,6 +1069,7 @@ const Game = (() => {
         p.judgmentText = 'MISS';
         p.judgmentTimer = 1.0;
         SFX.playHit();
+        Renderer.addBladeBlood();
 
         const totalBeats = currentBeatContinuous(gameNow);
         const beatIdx = Math.round(totalBeats);

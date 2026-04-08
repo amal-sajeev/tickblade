@@ -3,11 +3,157 @@ const Renderer = (() => {
     let bgCache = null;
     const CW = 800;
     const CH = 500;
-    const PLATFORM_Y = 430;
+    const PLATFORM_Y = 470;
     const PLATFORM_H = 18;
-    const PIVOT_Y = 45;
+    const PIVOT_Y = 10;
     const ARM_LEN = PLATFORM_Y - PIVOT_Y;
     const MAX_ANGLE = Math.PI / 3.2;
+
+    // ---- Blade blood accumulation ----
+    let bladeBloodSplatters = [];
+
+    function addBladeBlood() {
+        const count = 3 + Math.floor(Math.random() * 3);
+        for (let i = 0; i < count; i++) {
+            const t = Math.random();
+            const edgeX = -30 + 60 * t;
+            const edgeY = 36 * Math.sin(Math.PI * t);
+            bladeBloodSplatters.push({
+                x: edgeX + (Math.random() - 0.5) * 6,
+                y: edgeY - Math.random() * 6,
+                size: 1.5 + Math.random() * 2.5,
+                color: Math.random() > 0.4 ? '#991111' : '#771111',
+            });
+        }
+    }
+
+    function resetBladeBlood() {
+        bladeBloodSplatters = [];
+    }
+
+    function drawBladeBlood() {
+        if (bladeBloodSplatters.length === 0) return;
+        for (const s of bladeBloodSplatters) {
+            ctx.fillStyle = s.color;
+            ctx.fillRect(s.x - s.size / 2, s.y - s.size / 2, s.size, s.size);
+        }
+    }
+
+    // ---- Rope (chain) simulation ----
+    const BLADE_OFFSET = 20;
+    const ROPE_SEGS = 8;
+    const BLADE_CENTER_OFFSET = 21;
+    const ROPE_SEG_LEN = (ARM_LEN - BLADE_OFFSET + BLADE_CENTER_OFFSET) / ROPE_SEGS;
+    const ROPE_GRAVITY = 400;
+    const ROPE_ITERATIONS = 12;
+    const ROPE_DAMPING = 0.92;
+    const ROPE_STIFFNESS = 0.4;
+    let ropePoints = null;
+    let ropeLastTime = 0;
+
+    function initRope(anchorX, anchorY, endX, endY) {
+        ropePoints = [];
+        for (let i = 0; i <= ROPE_SEGS; i++) {
+            const t = i / ROPE_SEGS;
+            const x = anchorX + (endX - anchorX) * t;
+            const y = anchorY + (endY - anchorY) * t;
+            ropePoints.push({ x, y, ox: x, oy: y });
+        }
+        ropeLastTime = performance.now();
+    }
+
+    function updateRope(anchorX, anchorY, endX, endY) {
+        if (!ropePoints) {
+            initRope(anchorX, anchorY, endX, endY);
+            return;
+        }
+
+        const now = performance.now();
+        const dt = Math.min(0.033, (now - ropeLastTime) / 1000);
+        ropeLastTime = now;
+        if (dt <= 0) return;
+
+        // Compute the straight-line positions for stiffness blending
+        const restPoints = [];
+        for (let i = 0; i <= ROPE_SEGS; i++) {
+            const t = i / ROPE_SEGS;
+            restPoints.push({
+                x: anchorX + (endX - anchorX) * t,
+                y: anchorY + (endY - anchorY) * t,
+            });
+        }
+
+        // Verlet integration for interior points
+        for (let i = 1; i < ROPE_SEGS; i++) {
+            const p = ropePoints[i];
+            const vx = (p.x - p.ox) * ROPE_DAMPING;
+            const vy = (p.y - p.oy) * ROPE_DAMPING;
+            p.ox = p.x;
+            p.oy = p.y;
+            p.x += vx;
+            p.y += vy + ROPE_GRAVITY * dt * dt;
+
+            // Pull toward the straight-line rest position for stiffness
+            p.x += (restPoints[i].x - p.x) * ROPE_STIFFNESS;
+            p.y += (restPoints[i].y - p.y) * ROPE_STIFFNESS;
+        }
+
+        // Pin endpoints
+        ropePoints[0].x = ropePoints[0].ox = anchorX;
+        ropePoints[0].y = ropePoints[0].oy = anchorY;
+        ropePoints[ROPE_SEGS].x = ropePoints[ROPE_SEGS].ox = endX;
+        ropePoints[ROPE_SEGS].y = ropePoints[ROPE_SEGS].oy = endY;
+
+        // Distance constraints
+        for (let iter = 0; iter < ROPE_ITERATIONS; iter++) {
+            for (let i = 0; i < ROPE_SEGS; i++) {
+                const a = ropePoints[i];
+                const b = ropePoints[i + 1];
+                const dx = b.x - a.x;
+                const dy = b.y - a.y;
+                const dist = Math.sqrt(dx * dx + dy * dy) || 0.001;
+                const diff = (dist - ROPE_SEG_LEN) / dist * 0.5;
+                const ox = dx * diff;
+                const oy = dy * diff;
+
+                if (i > 0) { a.x += ox; a.y += oy; }
+                if (i < ROPE_SEGS - 1) { b.x -= ox; b.y -= oy; }
+            }
+            ropePoints[0].x = anchorX;
+            ropePoints[0].y = anchorY;
+            ropePoints[ROPE_SEGS].x = endX;
+            ropePoints[ROPE_SEGS].y = endY;
+        }
+
+        // Blend the last few points toward a straight line into the endpoint
+        // so the rope always visually connects to the blade
+        const BLEND_COUNT = 3;
+        for (let i = 1; i <= BLEND_COUNT; i++) {
+            const idx = ROPE_SEGS - i;
+            if (idx <= 0) break;
+            const blend = i / (BLEND_COUNT + 1);
+            const target = ropePoints[idx + 1] || { x: endX, y: endY };
+            const prev = ropePoints[idx - 1];
+            const straightX = prev.x + (target.x - prev.x) * 0.5;
+            const straightY = prev.y + (target.y - prev.y) * 0.5;
+            ropePoints[idx].x += (straightX - ropePoints[idx].x) * blend;
+            ropePoints[idx].y += (straightY - ropePoints[idx].y) * blend;
+        }
+    }
+
+    function drawRope() {
+        if (!ropePoints) return;
+        ctx.strokeStyle = '#555566';
+        ctx.lineWidth = 2.5;
+        ctx.lineCap = 'round';
+        ctx.lineJoin = 'round';
+        ctx.beginPath();
+        ctx.moveTo(ropePoints[0].x, ropePoints[0].y);
+        for (let i = 1; i <= ROPE_SEGS; i++) {
+            ctx.lineTo(ropePoints[i].x, ropePoints[i].y);
+        }
+        ctx.stroke();
+    }
 
     function init(c) {
         canvas = c;
@@ -110,56 +256,59 @@ const Renderer = (() => {
         const tipY = PIVOT_Y + ARM_LEN * Math.cos(angle);
         const nearCenter = 1 - Math.min(1, Math.abs(angle) / (MAX_ANGLE * 0.15));
 
-        // Arm
+        const bladeX = tipX - BLADE_OFFSET * Math.sin(angle);
+        const bladeY = tipY - BLADE_OFFSET * Math.cos(angle);
+
+        // Rope ends at blade center (local y=21, midpoint of the 42px crescent)
+        const BLADE_CENTER = 21;
+        const ropeTipX = bladeX + BLADE_CENTER * Math.sin(angle);
+        const ropeTipY = bladeY + BLADE_CENTER * Math.cos(angle);
+        updateRope(centerX, PIVOT_Y, ropeTipX, ropeTipY);
+        drawRope();
+
+        // Draw blade
         ctx.save();
-        ctx.strokeStyle = '#555566';
-        ctx.lineWidth = 3;
-        ctx.beginPath();
-        ctx.moveTo(centerX, PIVOT_Y);
-        ctx.lineTo(tipX, tipY);
-        ctx.stroke();
+        ctx.translate(bladeX, bladeY);
+        ctx.rotate(-angle * 0.6);
 
-        // Offset blade origin so its base (local y=BLADE_BASE) sits at the arm tip
-        const BLADE_BASE = 4;
-        ctx.translate(tipX - BLADE_BASE * Math.sin(angle),
-                      tipY - BLADE_BASE * Math.cos(angle));
-        ctx.rotate(angle);
-
-        // Crescent blade body
+        // Crescent blade body (facing downward from attachment at y=0)
         ctx.fillStyle = '#778899';
         ctx.beginPath();
-        ctx.moveTo(-36, BLADE_BASE);
-        ctx.quadraticCurveTo(0, -52, 36, BLADE_BASE);
-        ctx.quadraticCurveTo(0, -16, -36, BLADE_BASE);
+        ctx.moveTo(-32, 0);
+        ctx.quadraticCurveTo(0, 42, 32, 0);
+        ctx.quadraticCurveTo(0, 12, -32, 0);
         ctx.closePath();
         ctx.fill();
 
         // Inner steel highlight
         ctx.fillStyle = '#99aabb';
         ctx.beginPath();
-        ctx.moveTo(-30, 2);
-        ctx.quadraticCurveTo(0, -42, 30, 2);
-        ctx.quadraticCurveTo(0, -18, -30, 2);
+        ctx.moveTo(-26, 1);
+        ctx.quadraticCurveTo(0, 34, 26, 1);
+        ctx.quadraticCurveTo(0, 14, -26, 1);
         ctx.closePath();
         ctx.fill();
 
-        // Cutting edge gleam
+        // Cutting edge gleam (along bottom curve)
         ctx.strokeStyle = nearCenter > 0.3
             ? `rgba(240,248,255,${0.4 + 0.6 * nearCenter})`
             : 'rgba(200,215,230,0.4)';
         ctx.lineWidth = nearCenter > 0.3 ? 2 : 1;
         ctx.beginPath();
-        ctx.moveTo(-34, 3);
-        ctx.quadraticCurveTo(0, -49, 34, 3);
+        ctx.moveTo(-30, 1);
+        ctx.quadraticCurveTo(0, 40, 30, 1);
         ctx.stroke();
 
-        // Spine detail
+        // Spine detail (along top/back)
         ctx.strokeStyle = '#556677';
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(-28, 1);
-        ctx.quadraticCurveTo(0, -15, 28, 1);
+        ctx.moveTo(-24, 2);
+        ctx.quadraticCurveTo(0, 13, 24, 2);
         ctx.stroke();
+
+        // Blood accumulation on blade edge
+        drawBladeBlood();
 
         ctx.restore();
 
@@ -393,5 +542,9 @@ const Renderer = (() => {
         }
     }
 
-    return { init, render, MAX_ANGLE, PLATFORM_Y, PIVOT_Y, ARM_LEN, CW, CH };
+    function resetRope() {
+        ropePoints = null;
+    }
+
+    return { init, render, resetRope, addBladeBlood, resetBladeBlood, MAX_ANGLE, PLATFORM_Y, PIVOT_Y, ARM_LEN, CW, CH };
 })();
