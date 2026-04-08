@@ -119,15 +119,18 @@ const Renderer = (() => {
         ctx.lineTo(tipX, tipY);
         ctx.stroke();
 
-        ctx.translate(tipX, tipY);
+        // Offset blade origin so its base (local y=BLADE_BASE) sits at the arm tip
+        const BLADE_BASE = 4;
+        ctx.translate(tipX - BLADE_BASE * Math.sin(angle),
+                      tipY - BLADE_BASE * Math.cos(angle));
         ctx.rotate(angle);
 
-        // Crescent blade body -- always steel colored
+        // Crescent blade body
         ctx.fillStyle = '#778899';
         ctx.beginPath();
-        ctx.moveTo(-36, 4);
-        ctx.quadraticCurveTo(0, -52, 36, 4);
-        ctx.quadraticCurveTo(0, -16, -36, 4);
+        ctx.moveTo(-36, BLADE_BASE);
+        ctx.quadraticCurveTo(0, -52, 36, BLADE_BASE);
+        ctx.quadraticCurveTo(0, -16, -36, BLADE_BASE);
         ctx.closePath();
         ctx.fill();
 
@@ -140,7 +143,7 @@ const Renderer = (() => {
         ctx.closePath();
         ctx.fill();
 
-        // Cutting edge -- subtle gleam that brightens near center
+        // Cutting edge gleam
         ctx.strokeStyle = nearCenter > 0.3
             ? `rgba(240,248,255,${0.4 + 0.6 * nearCenter})`
             : 'rgba(200,215,230,0.4)';
