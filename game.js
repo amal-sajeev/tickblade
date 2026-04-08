@@ -29,6 +29,7 @@ const Game = (() => {
     let shakeTimer = 0;
     let countdownDisplay = '';
     let players = [];
+    let localPlayerIdx = 0;
     let rafId = null;
 
     // BPM segments for speed ramp
@@ -210,7 +211,7 @@ const Game = (() => {
     function resolveUnpressedBeat(beatIdx) {
         players.forEach((p) => {
             if (p.resolvedBeats.has(beatIdx)) return;
-            if (mode === 'online' && p.index === 1) return;
+            if (mode === 'online' && p.index !== localPlayerIdx) return;
 
             p.resolvedBeats.add(beatIdx);
 
@@ -761,8 +762,9 @@ const Game = (() => {
         if (data.type === 'start') {
             beginGame('online');
         }
-        if (data.type === 'action' && players[1]) {
-            const p = players[1];
+        const remoteIdx = 1 - localPlayerIdx;
+        if (data.type === 'action' && players[remoteIdx]) {
+            const p = players[remoteIdx];
             const prevHits = p.hits;
             p.score = data.score;
             p.hits = data.hits;
@@ -794,6 +796,7 @@ const Game = (() => {
     // ---- Game start ----
     function beginGame(gameMode) {
         mode = gameMode;
+        localPlayerIdx = (mode === 'online' && !MP.isHost) ? 1 : 0;
         players = [makePlayer(0)];
         if (mode !== 'practice' && mode !== 'debug') players.push(makePlayer(1));
 
@@ -827,7 +830,7 @@ const Game = (() => {
             const key = e.key;
             if (key === ' ' || key === 'w' || key === 'W') {
                 e.preventDefault();
-                handleJump(0);
+                handleJump(mode === 'online' ? localPlayerIdx : 0);
             }
             if (mode === 'local') {
                 if (key === 'ArrowUp' || key === 'Enter') {
@@ -849,7 +852,7 @@ const Game = (() => {
                 if (x < rect.width / 2) handleJump(0);
                 else handleJump(1);
             } else {
-                handleJump(0);
+                handleJump(mode === 'online' ? localPlayerIdx : 0);
             }
         });
     }
