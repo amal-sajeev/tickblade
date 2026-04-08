@@ -204,7 +204,9 @@ const Renderer = (() => {
             ctx.globalAlpha = 0.6;
         }
 
-        Sprites.draw(ctx, charX, charY, palette, state);
+        const HIT_ANIM_DUR = 0.7;
+        const hitProgress = (state === 'hit') ? 1 - (player.hitTimer / HIT_ANIM_DUR) : undefined;
+        Sprites.draw(ctx, charX, charY, palette, state, undefined, player.jumpProgress, hitProgress);
         ctx.globalAlpha = 1;
 
         // Mini blood spurt
@@ -270,7 +272,7 @@ const Renderer = (() => {
         ctx.save();
         ctx.translate(r.x + r.w / 2, r.y + r.h / 2);
         ctx.rotate(r.rotation);
-        Sprites.draw(ctx, -r.w / 2, -r.h / 2, r.palette, 'hit');
+        Sprites.draw(ctx, -r.w / 2, -r.h / 2, r.palette, 'hit', undefined, undefined, 1.0);
         ctx.restore();
     }
 

@@ -31,8 +31,10 @@ const Sprites = (() => {
     const SHEET_DEFS = {
         blue_idle: 'assets/blue_idle.png',
         blue_jump: 'assets/blue_jump.png',
+        blue_hit:  'assets/blue_hit.png',
         red_idle:  'assets/red_idle.png',
         red_jump:  'assets/red_jump.png',
+        red_hit:   'assets/red_hit.png',
     };
 
     function extractFrames(img) {
@@ -206,15 +208,14 @@ const Sprites = (() => {
     }
 
     function getFrame(paletteName, state, frameIdx) {
-        if (state === 'hit') {
-            return getScaledHitFallback(paletteName);
-        }
-
         const key = paletteName + '_' + state;
         const frameList = sheets[key];
         if (frameList && frameList.length > 0) {
             const i = (frameIdx || 0) % frameList.length;
             return frameList[i];
+        }
+        if (state === 'hit') {
+            return getScaledHitFallback(paletteName);
         }
         return getFallback(paletteName, state);
     }
@@ -239,18 +240,20 @@ const Sprites = (() => {
     }
 
     function frameCount(paletteName, state) {
-        if (state === 'hit') return 1;
         const key = paletteName + '_' + state;
         const frameList = sheets[key];
-        return (frameList && frameList.length > 0) ? frameList.length : 1;
+        if (frameList && frameList.length > 0) return frameList.length;
+        return 1;
     }
 
-    // jumpProgress: 0–1 fraction through the jump arc (used for jump animation sync)
-    function draw(ctx, x, y, paletteName, state, scaleOverride, jumpProgress) {
+    // jumpProgress / hitProgress: 0–1 fraction through the animation arc
+    function draw(ctx, x, y, paletteName, state, scaleOverride, jumpProgress, hitProgress) {
         const totalFrames = frameCount(paletteName, state);
         let frameIdx;
         if (state === 'jump' && totalFrames > 1 && jumpProgress != null) {
             frameIdx = Math.min(totalFrames - 1, Math.floor(jumpProgress * totalFrames));
+        } else if (state === 'hit' && totalFrames > 1 && hitProgress != null) {
+            frameIdx = Math.min(totalFrames - 1, Math.floor(hitProgress * totalFrames));
         } else {
             frameIdx = totalFrames > 1
                 ? Math.floor((performance.now() / 1000) * ANIM_FPS) % totalFrames
