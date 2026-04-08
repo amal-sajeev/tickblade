@@ -382,7 +382,7 @@ const Game = (() => {
                 break;
             }
             case 'aftermath': {
-                const DUR = 1.0;
+                const DUR = 1.3;
                 const t = Math.min(1, elapsed / DUR);
                 impactCam.zoom = 2.5 - 0.5 * easeOutQuad(t);
                 updateRagdoll(dt);
@@ -394,7 +394,7 @@ const Game = (() => {
                 break;
             }
             case 'zoomout': {
-                const DUR = 0.4;
+                const DUR = 0.5;
                 const t = Math.min(1, elapsed / DUR);
                 impactCam.zoom = 2.0 - 1.0 * easeInOutQuad(t);
                 updateRagdoll(dt);
@@ -413,34 +413,40 @@ const Game = (() => {
         const arenaW = (mode === 'practice' || mode === 'debug') ? Renderer.CW : Renderer.CW / 2;
         const arenaX = (impactCam.playerIdx === 1) ? Renderer.CW / 2 : 0;
         const cx = arenaX + arenaW / 2;
-        const charSize = Sprites.spriteSize('idle');
+        const charSize = Sprites.spriteSize('hit');
         const bladeDir = impactCam.startAngle >= 0 ? 1 : -1;
+        const slideDir = -bladeDir;
 
         impactCam.ragdoll = {
             x: cx - charSize.w / 2,
             y: Renderer.PLATFORM_Y - charSize.h,
-            vx: bladeDir * (180 + Math.random() * 80),
-            vy: -220 - Math.random() * 80,
+            vx: slideDir * (140 + Math.random() * 60),
+            vy: -(200 + Math.random() * 80),
             rotation: 0,
-            vr: bladeDir * (8 + Math.random() * 6),
+            vr: 0,
             w: charSize.w,
             h: charSize.h,
             palette: impactCam.playerIdx === 0 ? 'blue' : 'red',
             onGround: false,
-            bounces: 0,
+            sliding: false,
+            slideDir,
+            hitProgress: 0,
+            slideSpeed: 0,
+            trail: [],
+            trailTimer: 0,
         };
 
         const impactX = cx;
         const impactY = Renderer.PLATFORM_Y - charSize.h * 0.4;
-        for (let i = 0; i < 30; i++) {
+        for (let i = 0; i < 40; i++) {
             const spread = (Math.random() - 0.5) * 2;
             impactCam.particles.push({
-                x: impactX + spread * 10,
-                y: impactY + (Math.random() - 0.5) * 16,
-                vx: spread * 250 + bladeDir * 60,
-                vy: -Math.random() * 280 - 40,
-                life: 0.7 + Math.random() * 0.5,
-                size: 1 + Math.random() * 3,
+                x: impactX + spread * 14,
+                y: impactY + (Math.random() - 0.5) * 20,
+                vx: spread * 300 + bladeDir * 120,
+                vy: -Math.random() * 350 - 60,
+                life: 0.8 + Math.random() * 0.6,
+                size: 1.5 + Math.random() * 4,
                 gravity: 500 + Math.random() * 200,
                 landed: false,
             });
@@ -449,26 +455,54 @@ const Game = (() => {
 
     function updateRagdoll(dt) {
         const r = impactCam.ragdoll;
-        if (!r || r.onGround) return;
+        if (!r) return;
 
-        r.vy += 650 * dt;
+        if (r.sliding) {
+            r.y = Renderer.PLATFORM_Y - r.w / 2 - r.h / 2;
+
+            const friction = 220;
+            if (Math.abs(r.slideSpeed) > 5) {
+                r.slideSpeed -= Math.sign(r.slideSpeed) * friction * dt;
+                r.x += r.slideSpeed * dt;
+
+                r.trailTimer -= dt;
+                if (r.trailTimer <= 0) {
+                    r.trailTimer = 0.015;
+                    r.trail.push({
+                        x: r.x + r.w / 2 - r.slideDir * r.w * 0.4,
+                        y: Renderer.PLATFORM_Y - 2,
+                        size: 2 + Math.random() * 2.5,
+                    });
+                }
+            } else {
+                r.slideSpeed = 0;
+                r.onGround = true;
+            }
+            r.hitProgress = 1;
+            return;
+        }
+
+        // Airborne launch phase
+        r.vy += 800 * dt;
         r.x += r.vx * dt;
         r.y += r.vy * dt;
-        r.rotation += r.vr * dt;
 
-        if (r.y > Renderer.PLATFORM_Y - 8) {
-            r.y = Renderer.PLATFORM_Y - 8;
-            r.bounces++;
-            if (r.bounces >= 3 || Math.abs(r.vy) < 30) {
-                r.onGround = true;
-                r.vy = 0;
-                r.vx = 0;
-                r.vr = 0;
-            } else {
-                r.vy = -r.vy * 0.35;
-                r.vx *= 0.6;
-                r.vr *= 0.5;
-            }
+        const launchDur = 0.3;
+        r.hitProgress = Math.min(1, r.hitProgress + dt / launchDur);
+
+        const targetRot = r.slideDir * (Math.PI / 2);
+        r.rotation += (targetRot - r.rotation) * Math.min(1, dt * 10);
+
+        const groundY = Renderer.PLATFORM_Y - r.h;
+        if (r.y >= groundY) {
+            r.y = groundY;
+            r.vy = 0;
+            r.vx = 0;
+            r.rotation = targetRot;
+            r.sliding = true;
+            r.slideSpeed = r.slideDir * (200 + Math.random() * 60);
+            r.hitProgress = 1;
+            shakeTimer = 0.1;
         }
     }
 

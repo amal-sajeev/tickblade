@@ -272,10 +272,29 @@ const Renderer = (() => {
 
     function renderRagdoll(r) {
         if (!r) return;
+
+        // Blood trail smear behind sliding character
+        if (r.trail && r.trail.length > 0) {
+            const len = r.trail.length;
+            for (let i = 0; i < len; i++) {
+                const t = r.trail[i];
+                const fade = 0.35 + 0.35 * (i / len);
+                ctx.globalAlpha = fade;
+                ctx.fillStyle = (i % 3 === 0) ? '#881111' : '#aa1818';
+                const s = t.size;
+                ctx.fillRect(t.x - s / 2, t.y - s / 2, s, s);
+            }
+            ctx.globalAlpha = 1;
+        }
+
         ctx.save();
         ctx.translate(r.x + r.w / 2, r.y + r.h / 2);
         ctx.rotate(r.rotation);
-        Sprites.draw(ctx, -r.w / 2, -r.h / 2, r.palette, 'hit', undefined, undefined, 1.0);
+
+        const flipX = r.slideDir && r.slideDir < 0 ? -1 : 1;
+        if (flipX < 0) ctx.scale(-1, 1);
+
+        Sprites.draw(ctx, -r.w / 2, -r.h / 2, r.palette, 'hit', undefined, undefined, r.hitProgress != null ? r.hitProgress : 1.0);
         ctx.restore();
     }
 
