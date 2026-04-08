@@ -200,6 +200,11 @@ const Sprites = (() => {
     }
 
     // ---- Public API ----
+    function getIdleH() {
+        const f = sheets['blue_idle'];
+        return f && f.length ? f[0].height : H_FALLBACK * SCALE_FALLBACK;
+    }
+
     function getFrame(paletteName, state, frameIdx) {
         if (state === 'hit') {
             return getScaledHitFallback(paletteName);
@@ -221,8 +226,7 @@ const Sprites = (() => {
         const raw = getFallback(paletteName, 'hit');
         if (!sheetsReady) return raw;
 
-        const idleFrame = getFrame(paletteName, 'idle', 0);
-        const targetH = idleFrame.height;
+        const targetH = getIdleH();
         const s = targetH / raw.height;
         const c = document.createElement('canvas');
         c.width = Math.round(raw.width * s);
@@ -241,22 +245,36 @@ const Sprites = (() => {
         return (frameList && frameList.length > 0) ? frameList.length : 1;
     }
 
-    function draw(ctx, x, y, paletteName, state, scaleOverride) {
-        const now = performance.now();
+    // jumpProgress: 0–1 fraction through the jump arc (used for jump animation sync)
+    function draw(ctx, x, y, paletteName, state, scaleOverride, jumpProgress) {
         const totalFrames = frameCount(paletteName, state);
-        const frameIdx = totalFrames > 1
-            ? Math.floor((now / 1000) * ANIM_FPS) % totalFrames
-            : 0;
+        let frameIdx;
+        if (state === 'jump' && totalFrames > 1 && jumpProgress != null) {
+            frameIdx = Math.min(totalFrames - 1, Math.floor(jumpProgress * totalFrames));
+        } else {
+            frameIdx = totalFrames > 1
+                ? Math.floor((performance.now() / 1000) * ANIM_FPS) % totalFrames
+                : 0;
+        }
+
         const frame = getFrame(paletteName, state, frameIdx);
-        const s = scaleOverride || SCALE;
+
+        // Normalise all states to idle height so characters stay consistent in size
+        const targetH = getIdleH();
+        const displayH = targetH;
+        const displayW = Math.round(frame.width * (targetH / frame.height));
+
         ctx.imageSmoothingEnabled = false;
-        ctx.drawImage(frame, x, y, frame.width * s, frame.height * s);
+        ctx.drawImage(frame, x, y, displayW, displayH);
     }
 
-    function spriteSize(state, scaleOverride) {
-        const s = scaleOverride || SCALE;
+    function spriteSize(state) {
         const frame = getFrame('blue', state || 'idle', 0);
-        return { w: frame.width * s, h: frame.height * s };
+        const targetH = getIdleH();
+        return {
+            w: Math.round(frame.width * (targetH / frame.height)),
+            h: targetH,
+        };
     }
 
     return { draw, spriteSize, frameCount, Palettes, SCALE, W: W_FALLBACK, H: H_FALLBACK };

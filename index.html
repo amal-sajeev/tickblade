@@ -44,6 +44,7 @@
                 <button class="btn" id="btn-practice">PRACTICE</button>
                 <button class="btn" id="btn-local">LOCAL 1v1</button>
                 <button class="btn" id="btn-online">ONLINE 1v1</button>
+                <button class="btn btn-debug-menu hidden" id="btn-debug-mode">DEBUG MODE</button>
             </div>
             <div class="controls-hint">
                 <div class="controls-hint-keyboard">
@@ -81,6 +82,36 @@
             <div class="menu-buttons">
                 <button class="btn" id="btn-play-again">PLAY AGAIN</button>
                 <button class="btn btn-small" id="btn-back-menu">MENU</button>
+            </div>
+        </div>
+
+        <div id="debug-hud" class="hidden">
+            <div class="debug-hud-title">DEBUG</div>
+            <div class="debug-row">
+                <label>Speed</label>
+                <input type="range" id="debug-speed" min="5" max="100" value="100" step="5">
+                <span id="debug-speed-val">1.0x</span>
+            </div>
+            <div class="debug-row">
+                <label>BPM</label>
+                <input type="range" id="debug-bpm" min="20" max="300" value="60">
+                <span id="debug-bpm-val">60</span>
+            </div>
+            <div class="debug-row">
+                <label>Damage</label>
+                <button class="btn btn-debug" id="debug-toggle-damage">OFF</button>
+            </div>
+            <div class="debug-row">
+                <label>Inf Hearts</label>
+                <button class="btn btn-debug" id="debug-toggle-infhearts">ON</button>
+            </div>
+            <div class="debug-cfg-title">CONFIG</div>
+            <div class="debug-cfg-scroll" id="debug-cfg-list"></div>
+            <div class="debug-btns">
+                <button class="btn btn-debug" id="debug-cfg-reset">RESET CFG</button>
+                <button class="btn btn-debug" id="debug-kill">KILL</button>
+                <button class="btn btn-debug" id="debug-restart">RESTART</button>
+                <button class="btn btn-debug btn-debug-quit" id="debug-quit">QUIT</button>
             </div>
         </div>
     </div>

@@ -7,9 +7,9 @@ const Game = (() => {
         MAX_HITS: 3,
         PERFECT_WINDOW: 0.07,
         GOOD_WINDOW: 0.09,
-        JUMP_DURATION: 0.30,
+        JUMP_DURATION: 0.25,
         JUMP_HEIGHT: 35,
-        PRESS_COOLDOWN: 0.22,
+        PRESS_COOLDOWN: 0.32,
         RESOLVE_DELAY: 0.30,
         SAFE_HEIGHT_RATIO: 0.66,
         COUNTDOWN_BEATS: 4,
@@ -24,6 +24,7 @@ const Game = (() => {
     let lastResolvedBeat = -1;
     let lastTickBeat = -1;
     let lastFrameTime = 0;
+    let gameNow = 0;           // virtual clock (ms) — advances at debug speed
     let pendulumAngle = 0;
     let shakeTimer = 0;
     let countdownDisplay = '';
@@ -73,6 +74,23 @@ const Game = (() => {
         };
     }
 
+    // ---- Pendulum phase offset ----
+    // The blade crescent extends BLADE_HALF px from the tip. The character
+    // has half-width charHalf. Without correction the blade visually cuts
+    // into the character well before the beat fires. We advance the
+    // pendulum so its leading edge just reaches the character at beat time.
+    const BLADE_HALF = 36;
+    let pendulumLead = 0;
+
+    function computePendulumLead() {
+        const charHalf = Sprites.spriteSize('idle').w / 2;
+        const contactDist = BLADE_HALF + charHalf;
+        const ratio = Math.min(1, contactDist / Renderer.ARM_LEN);
+        const contactAngle = Math.asin(ratio);
+        const fraction = Math.min(1, contactAngle / Renderer.MAX_ANGLE);
+        pendulumLead = Math.asin(fraction) / Math.PI;
+    }
+
     // ---- Timing ----
     function currentBeatContinuous(now) {
         const seg = bpmSegments[bpmSegments.length - 1];
@@ -102,7 +120,7 @@ const Game = (() => {
 
     // ---- UI helpers ----
     function showScreen(name) {
-        ['menu-screen', 'lobby-screen', 'results-screen', 'hud'].forEach((id) => {
+        ['menu-screen', 'lobby-screen', 'results-screen', 'hud', 'debug-hud'].forEach((id) => {
             $(id).classList.add('hidden');
         });
         if (name) $(name).classList.remove('hidden');
@@ -131,7 +149,7 @@ const Game = (() => {
         const p = players[playerIdx];
         if (!p) return;
 
-        const now = performance.now();
+        const now = gameNow;
         if (now - p.lastPressTime < CFG.PRESS_COOLDOWN * 1000) return;
         p.lastPressTime = now;
 
@@ -217,7 +235,9 @@ const Game = (() => {
             }
 
             // Player was on the ground when blade passed -- hit
+            if (isDebugInvincible()) return;
             p.hits++;
+            if (isDebugMode() && debugInfHearts) p.hits = Math.min(p.hits, CFG.MAX_HITS - 1);
             p.streak = 0;
             p.judgmentText = 'MISS';
             p.judgmentTimer = 1.0;
@@ -262,7 +282,7 @@ const Game = (() => {
         if (winner >= 0) SFX.playWin(); else SFX.playGameOver();
 
         const title = $('results-title');
-        if (mode === 'practice') {
+        if (mode === 'practice' || mode === 'debug') {
             title.textContent = 'GAME OVER';
         } else if (winner === 0) {
             title.textContent = 'PLAYER 1 WINS';
@@ -293,7 +313,7 @@ const Game = (() => {
 
     // ---- Mini blood spurt for non-fatal hits ----
     function spawnBloodSpurt(player) {
-        const arenaW = (mode === 'practice') ? Renderer.CW : Renderer.CW / 2;
+        const arenaW = (mode === 'practice' || mode === 'debug') ? Renderer.CW : Renderer.CW / 2;
         const arenaX = (player.index === 1) ? Renderer.CW / 2 : 0;
         const cx = arenaX + arenaW / 2;
         const charSize = Sprites.spriteSize('idle');
@@ -317,7 +337,7 @@ const Game = (() => {
     function easeInOutQuad(t) { return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; }
 
     function startImpactCam(playerIdx, beatIdx) {
-        const now = performance.now();
+        const now = gameNow;
         impactCam = {
             active: true,
             phase: 'zoomin',
@@ -390,7 +410,7 @@ const Game = (() => {
     }
 
     function spawnImpactEffects() {
-        const arenaW = (mode === 'practice') ? Renderer.CW : Renderer.CW / 2;
+        const arenaW = (mode === 'practice' || mode === 'debug') ? Renderer.CW : Renderer.CW / 2;
         const arenaX = (impactCam.playerIdx === 1) ? Renderer.CW / 2 : 0;
         const cx = arenaX + arenaW / 2;
         const charSize = Sprites.spriteSize('idle');
@@ -489,15 +509,17 @@ const Game = (() => {
     // ---- Countdown & Start ----
     function startCountdown() {
         phase = 'countdown';
-        countdownStartTime = performance.now();
+        countdownStartTime = gameNow;
         countdownDisplay = '';
+        computePendulumLead();
         showScreen('hud');
+        if (mode === 'debug') showDebugHUD();
         updateHUD();
     }
 
     function startPlaying() {
         phase = 'playing';
-        gameStartTime = performance.now();
+        gameStartTime = gameNow;
         lastResolvedBeat = -1;
         lastTickBeat = 0; // skip tick on beat 0 since GO sound covers it
         bpm = CFG.START_BPM;
@@ -507,7 +529,7 @@ const Game = (() => {
 
     // ---- Update ----
     function update(dt) {
-        const now = performance.now();
+        const now = gameNow;
 
         if (impactCam.active) {
             updateImpactCam(dt, now);
@@ -536,7 +558,7 @@ const Game = (() => {
 
             // Pendulum preview during countdown
             const previewBeats = elapsed / beatInterval;
-            pendulumAngle = Renderer.MAX_ANGLE * Math.sin(Math.PI * previewBeats);
+            pendulumAngle = Renderer.MAX_ANGLE * Math.sin(Math.PI * (previewBeats - pendulumLead));
 
             if (elapsed >= CFG.COUNTDOWN_BEATS * beatInterval) {
                 startPlaying();
@@ -549,42 +571,68 @@ const Game = (() => {
         const totalBeats = currentBeatContinuous(now);
         const currentBeatInt = Math.floor(totalBeats);
 
-        // Pendulum angle
-        pendulumAngle = Renderer.MAX_ANGLE * Math.sin(Math.PI * totalBeats);
+        // Pendulum angle (phase-shifted so blade edge arrives at character on beat)
+        pendulumAngle = Renderer.MAX_ANGLE * Math.sin(Math.PI * (totalBeats - pendulumLead));
 
-        // Metronome tick
+        // Metronome tick — resolve beats immediately when the blade arrives
         if (currentBeatInt > lastTickBeat) {
             lastTickBeat = currentBeatInt;
             SFX.playTick();
 
-            // Fatal hit detection at the exact frame the blade touches the character
             if (mode !== 'online' && currentBeatInt > 0) {
                 for (let i = 0; i < players.length; i++) {
                     const p = players[i];
-                    if (p.hits < CFG.MAX_HITS - 1) continue;
                     if (p.resolvedBeats.has(currentBeatInt)) continue;
-                    if (!wasAirborneAtBeat(p, currentBeatInt)) {
+
+                    if (wasAirborneAtBeat(p, currentBeatInt)) {
                         p.resolvedBeats.add(currentBeatInt);
-                        p.hits++;
-                        p.streak = 0;
-                        p.judgmentText = 'MISS';
+                        p.score += 1;
+                        p.streak++;
+                        p.bestStreak = Math.max(p.bestStreak, p.streak);
+                        p.judgmentText = 'GOOD';
                         p.judgmentTimer = 1.0;
-                        SFX.playHit();
+                        if (mode === 'online') {
+                            MP.send({ type: 'action', beat: currentBeatInt, judgment: 'GOOD',
+                                score: p.score, hits: p.hits, streak: p.streak });
+                        }
+                        continue;
+                    }
+
+                    // Player was on the ground — blade hits them
+                    p.resolvedBeats.add(currentBeatInt);
+                    if (isDebugInvincible()) continue;
+
+                    p.hits++;
+                    if (isDebugMode() && debugInfHearts) p.hits = Math.min(p.hits, CFG.MAX_HITS - 1);
+                    p.streak = 0;
+                    p.judgmentText = 'MISS';
+                    p.judgmentTimer = 1.0;
+                    SFX.playHit();
+
+                    if (mode === 'online') {
+                        MP.send({ type: 'action', beat: currentBeatInt, judgment: 'MISS',
+                            score: p.score, hits: p.hits, streak: 0 });
+                    }
+
+                    if (p.hits >= CFG.MAX_HITS) {
                         startImpactCam(i, currentBeatInt);
                         return;
                     }
+
+                    p.hitTimer = 0.7;
+                    shakeTimer = 0.15;
+                    spawnBloodSpurt(p);
                 }
+                lastResolvedBeat = Math.max(lastResolvedBeat, currentBeatInt);
+                if (checkWin()) return;
             }
         }
 
-        // Resolve past beats
-        for (let b = lastResolvedBeat + 1; b <= currentBeatInt; b++) {
-            const bTime = beatTimeMs(b);
-            if (now - bTime > CFG.RESOLVE_DELAY * 1000) {
-                resolveUnpressedBeat(b);
-                lastResolvedBeat = b;
-                if (checkWin()) return;
-            }
+        // Safety net: resolve any beats that slipped past the tick handler
+        for (let b = lastResolvedBeat + 1; b < currentBeatInt; b++) {
+            resolveUnpressedBeat(b);
+            lastResolvedBeat = b;
+            if (checkWin()) return;
         }
 
         // BPM ramp
@@ -630,8 +678,12 @@ const Game = (() => {
 
     // ---- Main loop ----
     function loop(timestamp) {
-        const dt = Math.min(0.05, (timestamp - lastFrameTime) / 1000);
+        const rawDt = Math.min(0.05, (timestamp - lastFrameTime) / 1000);
         lastFrameTime = timestamp;
+
+        const speed = isDebugMode() ? debugSpeed : 1;
+        const dt = rawDt * speed;
+        gameNow += dt * 1000;
 
         update(dt);
 
@@ -688,7 +740,7 @@ const Game = (() => {
             }
             if (data.judgment !== 'MISS' && !p.isJumping) {
                 p.isJumping = true;
-                p.jumpStartTime = performance.now();
+                p.jumpStartTime = gameNow;
             }
             p.resolvedBeats.add(data.beat);
             if (p.hits >= CFG.MAX_HITS && phase === 'playing') {
@@ -709,11 +761,16 @@ const Game = (() => {
     function beginGame(gameMode) {
         mode = gameMode;
         players = [makePlayer(0)];
-        if (mode !== 'practice') players.push(makePlayer(1));
+        if (mode !== 'practice' && mode !== 'debug') players.push(makePlayer(1));
 
-        // Show/hide P2 HUD
+        // Show/hide P2 HUD and debug HUD
         const p2hud = $('hud-p2');
-        p2hud.style.display = mode === 'practice' ? 'none' : '';
+        p2hud.style.display = (mode === 'practice' || mode === 'debug') ? 'none' : '';
+        if (mode === 'debug') {
+            showDebugHUD();
+        } else {
+            $('debug-hud').classList.add('hidden');
+        }
 
         pendulumAngle = 0;
         shakeTimer = 0;
@@ -833,14 +890,164 @@ const Game = (() => {
         });
     }
 
+    // ---- Debug mode ----
+    let debugUnlocked = false;
+    let debugDamageEnabled = false;
+    let debugInfHearts = true;
+    let debugSpeed = 1.0;
+    let debugKeyBuffer = '';
+
+    function isDebugMode() { return mode === 'debug'; }
+
+    function setupDebug() {
+        // Secret code listener — works on menu and results screens
+        document.addEventListener('keydown', (e) => {
+            if (phase !== 'menu' && phase !== 'results') {
+                debugKeyBuffer = '';
+                return;
+            }
+            if (e.key.length === 1) {
+                debugKeyBuffer += e.key.toLowerCase();
+                if (debugKeyBuffer.length > 10) debugKeyBuffer = debugKeyBuffer.slice(-10);
+                if (debugKeyBuffer.endsWith('debug')) {
+                    debugKeyBuffer = '';
+                    debugUnlocked = !debugUnlocked;
+                    $('btn-debug-mode').classList.toggle('hidden', !debugUnlocked);
+                }
+            }
+        });
+
+        $('btn-debug-mode').addEventListener('click', () => {
+            SFX.init();
+            debugDamageEnabled = false;
+            debugInfHearts = true;
+            debugSpeed = 1.0;
+            beginGame('debug');
+        });
+
+        $('debug-speed').addEventListener('input', (e) => {
+            debugSpeed = parseInt(e.target.value, 10) / 100;
+            $('debug-speed-val').textContent = debugSpeed.toFixed(1) + 'x';
+        });
+
+        $('debug-bpm').addEventListener('input', (e) => {
+            const newBpm = parseInt(e.target.value, 10);
+            $('debug-bpm-val').textContent = newBpm;
+            if (phase === 'playing' && !impactCam.active) {
+                const totalBeats = currentBeatContinuous(gameNow);
+                const currentBeatInt = Math.floor(totalBeats);
+                addBpmSegment(currentBeatInt, newBpm);
+            }
+        });
+
+        $('debug-toggle-damage').addEventListener('click', () => {
+            debugDamageEnabled = !debugDamageEnabled;
+            syncDebugToggles();
+        });
+
+        $('debug-toggle-infhearts').addEventListener('click', () => {
+            debugInfHearts = !debugInfHearts;
+            syncDebugToggles();
+        });
+
+        $('debug-kill').addEventListener('click', () => {
+            if (phase === 'playing' && players[0] && !impactCam.active) {
+                debugKillPlayer(0);
+            }
+        });
+
+        $('debug-restart').addEventListener('click', () => {
+            beginGame('debug');
+        });
+
+        $('debug-quit').addEventListener('click', () => {
+            $('debug-hud').classList.add('hidden');
+            phase = 'menu';
+            showScreen('menu-screen');
+        });
+
+        $('debug-cfg-reset').addEventListener('click', () => {
+            Object.assign(CFG, CFG_DEFAULTS);
+            buildCfgInputs();
+        });
+
+        buildCfgInputs();
+    }
+
+    const CFG_DEFAULTS = Object.assign({}, CFG);
+
+    function buildCfgInputs() {
+        const list = $('debug-cfg-list');
+        list.innerHTML = '';
+        Object.keys(CFG).forEach(key => {
+            const row = document.createElement('div');
+            row.className = 'debug-cfg-row';
+
+            const label = document.createElement('label');
+            label.textContent = key;
+            label.title = key;
+
+            const input = document.createElement('input');
+            input.type = 'number';
+            input.value = CFG[key];
+            input.step = Number.isInteger(CFG_DEFAULTS[key]) ? '1' : '0.01';
+            input.addEventListener('change', () => {
+                const v = parseFloat(input.value);
+                if (!isNaN(v)) CFG[key] = v;
+            });
+
+            row.appendChild(label);
+            row.appendChild(input);
+            list.appendChild(row);
+        });
+    }
+
+    function syncDebugToggles() {
+        const dmgBtn = $('debug-toggle-damage');
+        dmgBtn.textContent = debugDamageEnabled ? 'ON' : 'OFF';
+        dmgBtn.style.color = debugDamageEnabled ? '#ee4444' : '#44dd66';
+        const ihBtn = $('debug-toggle-infhearts');
+        ihBtn.textContent = debugInfHearts ? 'ON' : 'OFF';
+        ihBtn.style.color = debugInfHearts ? '#44dd66' : '#888';
+    }
+
+    function showDebugHUD() {
+        const hud = $('debug-hud');
+        hud.classList.remove('hidden');
+        $('debug-speed').value = Math.round(debugSpeed * 100);
+        $('debug-speed-val').textContent = debugSpeed.toFixed(1) + 'x';
+        $('debug-bpm').value = bpm;
+        $('debug-bpm-val').textContent = bpm;
+        syncDebugToggles();
+    }
+
+    function debugKillPlayer(idx) {
+        const p = players[idx];
+        p.hits = CFG.MAX_HITS;
+        p.streak = 0;
+        p.judgmentText = 'MISS';
+        p.judgmentTimer = 1.0;
+        SFX.playHit();
+
+        const totalBeats = currentBeatContinuous(gameNow);
+        const beatIdx = Math.round(totalBeats);
+        startImpactCam(idx, beatIdx);
+    }
+
+    function isDebugInvincible() {
+        return isDebugMode() && !debugDamageEnabled;
+    }
+
     // ---- Init ----
     function init() {
         const canvas = $('game-canvas');
         Renderer.init(canvas);
         setupInput();
         setupMenus();
+        setupDebug();
         showScreen('menu-screen');
         lastFrameTime = performance.now();
+        gameNow = performance.now();
         rafId = requestAnimationFrame(loop);
     }
 
