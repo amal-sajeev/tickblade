@@ -48,29 +48,29 @@ const Renderer = (() => {
     const ROPE_ITERATIONS = 12;
     const ROPE_DAMPING = 0.92;
     const ROPE_STIFFNESS = 0.4;
-    let ropePoints = null;
-    let ropeLastTime = 0;
+    let ropePoints = [null, null];
+    let ropeLastTime = [0, 0];
 
-    function initRope(anchorX, anchorY, endX, endY) {
-        ropePoints = [];
+    function initRope(idx, anchorX, anchorY, endX, endY) {
+        ropePoints[idx] = [];
         for (let i = 0; i <= ROPE_SEGS; i++) {
             const t = i / ROPE_SEGS;
             const x = anchorX + (endX - anchorX) * t;
             const y = anchorY + (endY - anchorY) * t;
-            ropePoints.push({ x, y, ox: x, oy: y });
+            ropePoints[idx].push({ x, y, ox: x, oy: y });
         }
-        ropeLastTime = performance.now();
+        ropeLastTime[idx] = performance.now();
     }
 
-    function updateRope(anchorX, anchorY, endX, endY) {
-        if (!ropePoints) {
-            initRope(anchorX, anchorY, endX, endY);
+    function updateRope(idx, anchorX, anchorY, endX, endY) {
+        if (!ropePoints[idx]) {
+            initRope(idx, anchorX, anchorY, endX, endY);
             return;
         }
 
         const now = performance.now();
-        const dt = Math.min(0.033, (now - ropeLastTime) / 1000);
-        ropeLastTime = now;
+        const dt = Math.min(0.033, (now - ropeLastTime[idx]) / 1000);
+        ropeLastTime[idx] = now;
         if (dt <= 0) return;
 
         // Compute the straight-line positions for stiffness blending
@@ -85,7 +85,7 @@ const Renderer = (() => {
 
         // Verlet integration for interior points
         for (let i = 1; i < ROPE_SEGS; i++) {
-            const p = ropePoints[i];
+            const p = ropePoints[idx][i];
             const vx = (p.x - p.ox) * ROPE_DAMPING;
             const vy = (p.y - p.oy) * ROPE_DAMPING;
             p.ox = p.x;
@@ -99,16 +99,16 @@ const Renderer = (() => {
         }
 
         // Pin endpoints
-        ropePoints[0].x = ropePoints[0].ox = anchorX;
-        ropePoints[0].y = ropePoints[0].oy = anchorY;
-        ropePoints[ROPE_SEGS].x = ropePoints[ROPE_SEGS].ox = endX;
-        ropePoints[ROPE_SEGS].y = ropePoints[ROPE_SEGS].oy = endY;
+        ropePoints[idx][0].x = ropePoints[idx][0].ox = anchorX;
+        ropePoints[idx][0].y = ropePoints[idx][0].oy = anchorY;
+        ropePoints[idx][ROPE_SEGS].x = ropePoints[idx][ROPE_SEGS].ox = endX;
+        ropePoints[idx][ROPE_SEGS].y = ropePoints[idx][ROPE_SEGS].oy = endY;
 
         // Distance constraints
         for (let iter = 0; iter < ROPE_ITERATIONS; iter++) {
             for (let i = 0; i < ROPE_SEGS; i++) {
-                const a = ropePoints[i];
-                const b = ropePoints[i + 1];
+                const a = ropePoints[idx][i];
+                const b = ropePoints[idx][i + 1];
                 const dx = b.x - a.x;
                 const dy = b.y - a.y;
                 const dist = Math.sqrt(dx * dx + dy * dy) || 0.001;
@@ -119,38 +119,38 @@ const Renderer = (() => {
                 if (i > 0) { a.x += ox; a.y += oy; }
                 if (i < ROPE_SEGS - 1) { b.x -= ox; b.y -= oy; }
             }
-            ropePoints[0].x = anchorX;
-            ropePoints[0].y = anchorY;
-            ropePoints[ROPE_SEGS].x = endX;
-            ropePoints[ROPE_SEGS].y = endY;
+            ropePoints[idx][0].x = anchorX;
+            ropePoints[idx][0].y = anchorY;
+            ropePoints[idx][ROPE_SEGS].x = endX;
+            ropePoints[idx][ROPE_SEGS].y = endY;
         }
 
         // Blend the last few points toward a straight line into the endpoint
         // so the rope always visually connects to the blade
         const BLEND_COUNT = 3;
         for (let i = 1; i <= BLEND_COUNT; i++) {
-            const idx = ROPE_SEGS - i;
-            if (idx <= 0) break;
+            const segIdx = ROPE_SEGS - i;
+            if (segIdx <= 0) break;
             const blend = i / (BLEND_COUNT + 1);
-            const target = ropePoints[idx + 1] || { x: endX, y: endY };
-            const prev = ropePoints[idx - 1];
+            const target = ropePoints[idx][segIdx + 1] || { x: endX, y: endY };
+            const prev = ropePoints[idx][segIdx - 1];
             const straightX = prev.x + (target.x - prev.x) * 0.5;
             const straightY = prev.y + (target.y - prev.y) * 0.5;
-            ropePoints[idx].x += (straightX - ropePoints[idx].x) * blend;
-            ropePoints[idx].y += (straightY - ropePoints[idx].y) * blend;
+            ropePoints[idx][segIdx].x += (straightX - ropePoints[idx][segIdx].x) * blend;
+            ropePoints[idx][segIdx].y += (straightY - ropePoints[idx][segIdx].y) * blend;
         }
     }
 
-    function drawRope() {
-        if (!ropePoints) return;
+    function drawRope(idx) {
+        if (!ropePoints[idx]) return;
         ctx.strokeStyle = '#555566';
         ctx.lineWidth = 2.5;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
         ctx.beginPath();
-        ctx.moveTo(ropePoints[0].x, ropePoints[0].y);
+        ctx.moveTo(ropePoints[idx][0].x, ropePoints[idx][0].y);
         for (let i = 1; i <= ROPE_SEGS; i++) {
-            ctx.lineTo(ropePoints[i].x, ropePoints[i].y);
+            ctx.lineTo(ropePoints[idx][i].x, ropePoints[idx][i].y);
         }
         ctx.stroke();
     }
@@ -251,7 +251,7 @@ const Renderer = (() => {
         ctx.fillRect(x, PLATFORM_Y + PLATFORM_H, w, CH - PLATFORM_Y - PLATFORM_H);
     }
 
-    function renderPendulum(centerX, angle) {
+    function renderPendulum(centerX, angle, ropeIdx) {
         const tipX = centerX + ARM_LEN * Math.sin(angle);
         const tipY = PIVOT_Y + ARM_LEN * Math.cos(angle);
         const nearCenter = 1 - Math.min(1, Math.abs(angle) / (MAX_ANGLE * 0.15));
@@ -263,8 +263,8 @@ const Renderer = (() => {
         const BLADE_CENTER = 21;
         const ropeTipX = bladeX + BLADE_CENTER * Math.sin(angle);
         const ropeTipY = bladeY + BLADE_CENTER * Math.cos(angle);
-        updateRope(centerX, PIVOT_Y, ropeTipX, ropeTipY);
-        drawRope();
+        updateRope(ropeIdx, centerX, PIVOT_Y, ropeTipX, ropeTipY);
+        drawRope(ropeIdx);
 
         // Draw blade
         ctx.save();
@@ -471,7 +471,7 @@ const Renderer = (() => {
         ctx.globalAlpha = 1;
     }
 
-    function renderArena(player, arenaX, arenaW, pendulumAngle, icam) {
+    function renderArena(player, arenaX, arenaW, pendulumAngle, icam, ropeIdx) {
         ctx.save();
         ctx.beginPath();
         ctx.rect(arenaX, 0, arenaW, CH);
@@ -493,7 +493,7 @@ const Renderer = (() => {
             renderSplatters(icam.splatters);
         }
 
-        renderPendulum(centerX, pendulumAngle);
+        renderPendulum(centerX, pendulumAngle, ropeIdx);
 
         if (icam && icam.ragdoll) {
             renderRagdoll(icam.ragdoll);
@@ -516,15 +516,15 @@ const Renderer = (() => {
 
         if (!state.players || state.players.length === 0) {
             renderPlatform(0, CW);
-            renderPendulum(CW / 2, state.pendulumAngle || 0);
+            renderPendulum(CW / 2, state.pendulumAngle || 0, 0);
         } else if (state.mode === 'practice' || state.mode === 'debug') {
             const icam = (ic && ic.playerIdx === 0) ? ic : null;
-            renderArena(state.players[0], 0, CW, state.pendulumAngle, icam);
+            renderArena(state.players[0], 0, CW, state.pendulumAngle, icam, 0);
         } else if (state.players.length > 1) {
             const ic0 = (ic && ic.playerIdx === 0) ? ic : null;
             const ic1 = (ic && ic.playerIdx === 1) ? ic : null;
-            renderArena(state.players[0], 0, CW / 2, state.pendulumAngle, ic0);
-            renderArena(state.players[1], CW / 2, CW / 2, state.pendulumAngle, ic1);
+            renderArena(state.players[0], 0, CW / 2, state.pendulumAngle, ic0, 0);
+            renderArena(state.players[1], CW / 2, CW / 2, state.pendulumAngle, ic1, 1);
             renderDivider();
         }
 
@@ -543,7 +543,7 @@ const Renderer = (() => {
     }
 
     function resetRope() {
-        ropePoints = null;
+        ropePoints = [null, null];
     }
 
     return { init, render, resetRope, addBladeBlood, resetBladeBlood, MAX_ANGLE, PLATFORM_Y, PIVOT_Y, ARM_LEN, CW, CH };
