@@ -16,15 +16,15 @@ const Game = (() => {
     };
 
     // ---- State ----
-    let mode = null;          // 'practice' | 'local' | 'online'
-    let phase = 'menu';       // 'menu' | 'lobby' | 'countdown' | 'playing' | 'results'
+    let mode = null;
+    let phase = 'menu';
     let bpm = CFG.START_BPM;
     let gameStartTime = 0;
     let countdownStartTime = 0;
     let lastResolvedBeat = -1;
     let lastTickBeat = -1;
     let lastFrameTime = 0;
-    let gameNow = 0;           // virtual clock (ms) — advances at debug speed
+    let gameNow = 0;
     let pendulumAngle = 0;
     let shakeTimer = 0;
     let countdownDisplay = '';
@@ -35,51 +35,80 @@ const Game = (() => {
     // BPM segments for speed ramp
     let bpmSegments = [];
 
-    // ---- Impact cam (Peggle-style slow-mo hit) ----
-    let impactCam = {
-        active: false,
-        phase: 'none',       // 'approach' | 'impact' | 'aftermath' | 'zoomout'
-        startTime: 0,
-        phaseTime: 0,
-        playerIdx: -1,
-        beatIdx: -1,
-        startAngle: 0,
-        angle: 0,
-        zoom: 1,
-        ragdoll: null,
-        particles: [],
-        splatters: [],
-        hitApplied: false,
+    // ---- Pause ----
+    let pauseStartTime = 0;
+
+    // ---- Survival ----
+    let survivalStartTime = 0;
+
+    // ---- Difficulty ----
+    let selectedDifficulty = 'normal';
+    let pendingMode = null;
+    const DIFFICULTY_PRESETS = {
+        easy:   { START_BPM: 40, MAX_BPM: 120, PERFECT_WINDOW: 0.10, GOOD_WINDOW: 0.14, MAX_HITS: 5, BPM_STEP: 3 },
+        normal: {},
+        hard:   { START_BPM: 80, MAX_BPM: 220, PERFECT_WINDOW: 0.05, GOOD_WINDOW: 0.07, MAX_HITS: 2, BPM_STEP: 8 },
+    };
+    let mutators = { oneHitKO: false, doubleRamp: false, invisibleBlade: false };
+    let practiceBpm = 60;
+    let practiceBpmLock = false;
+
+    // ---- Rematch / best-of-3 ----
+    let seriesWins = [0, 0];
+    let seriesRound = 0;
+    const SERIES_MAX = 3;
+
+    // ---- Settings ----
+    let settings = {
+        shakeEnabled: true,
+        cameraEnabled: true,
     };
 
-    // ---- DOM refs ----
+    // ---- Red flash for screen effects ----
+    let redFlashTimer = 0;
+
+    // ---- Announcer state ----
+    let lastDangerAnnounce = -1;
+    let lastStreakAnnounce = 0;
+
+    // ---- Power-ups / Hazards ----
+    let powerUps = [];
+    let lastPowerUpBeat = 0;
+    const POWERUP_INTERVAL = 12;
+    const POWERUP_TYPES = ['shield', 'slow', 'doublePoints', 'spike'];
+
+    // ---- Variable pendulum patterns ----
+    let pendulumPattern = 'normal';
+    let patternStartBeat = 0;
+
+    // ---- Tutorial ----
+    let tutorialStep = -1;
+    let tutorialActive = false;
+
+    // ---- Emotes ----
+    const EMOTE_LIST = ['!', 'GG', 'Nice!', '...'];
+
+    // ---- Impact cam ----
+    let impactCam = {
+        active: false, phase: 'none', startTime: 0, phaseTime: 0,
+        playerIdx: -1, beatIdx: -1, startAngle: 0, angle: 0, zoom: 1,
+        ragdoll: null, particles: [], splatters: [], hitApplied: false,
+    };
+
     const $ = (id) => document.getElementById(id);
 
-    // ---- Player factory ----
     function makePlayer(idx) {
         return {
-            index: idx,
-            score: 0,
-            streak: 0,
-            bestStreak: 0,
-            hits: 0,
-            isJumping: false,
-            jumpStartTime: 0,
-            jumpY: 0,
-            lastPressTime: 0,
-            resolvedBeats: new Set(),
-            judgmentText: '',
-            judgmentTimer: 0,
-            hitTimer: 0,
-            bloodSpurt: [],
+            index: idx, score: 0, streak: 0, bestStreak: 0, combo: 0,
+            hits: 0, isJumping: false, jumpStartTime: 0, jumpY: 0,
+            lastPressTime: 0, resolvedBeats: new Set(),
+            judgmentText: '', judgmentTimer: 0, hitTimer: 0, bloodSpurt: [],
+            emote: null, emoteTimer: 0,
+            shield: false, shieldTimer: 0, doublePoints: 0,
         };
     }
 
     // ---- Pendulum phase offset ----
-    // The blade crescent extends BLADE_HALF px from the tip. The character
-    // has half-width charHalf. Without correction the blade visually cuts
-    // into the character well before the beat fires. We advance the
-    // pendulum so its leading edge just reaches the character at beat time.
     const BLADE_HALF = 32;
     let pendulumLead = 0;
 
@@ -119,30 +148,66 @@ const Game = (() => {
         }
     }
 
+    // ---- Variable pendulum patterns ----
+    function getPendulumPhase(totalBeats) {
+        if (pendulumPattern === 'normal' || bpm < 140) {
+            return totalBeats;
+        }
+        const localBeat = totalBeats - patternStartBeat;
+        if (pendulumPattern === 'double') {
+            // Two quick swings then a pause: compress 2 beats into 1 period, then hold
+            const cycle = localBeat % 3;
+            if (cycle < 2) return patternStartBeat + (localBeat - (localBeat % 3)) + cycle * 1.5;
+            return patternStartBeat + (localBeat - (localBeat % 3)) + 3;
+        }
+        if (pendulumPattern === 'syncopation') {
+            return totalBeats + 0.25 * Math.sin(totalBeats * Math.PI * 0.5);
+        }
+        if (pendulumPattern === 'pause') {
+            const cycle = localBeat % 4;
+            if (cycle < 3) return totalBeats;
+            // Hold at apex for the 4th beat
+            return patternStartBeat + (localBeat - cycle) + 3;
+        }
+        return totalBeats;
+    }
+
     // ---- UI helpers ----
     function showScreen(name) {
-        ['menu-screen', 'lobby-screen', 'results-screen', 'hud', 'debug-hud'].forEach((id) => {
+        ['menu-screen', 'lobby-screen', 'results-screen', 'hud', 'debug-hud',
+         'pause-screen', 'difficulty-screen', 'settings-screen', 'tutorial-overlay'].forEach((id) => {
             $(id).classList.add('hidden');
         });
         if (name) $(name).classList.remove('hidden');
+    }
+
+    function hideOverlay(name) {
+        $(name).classList.add('hidden');
     }
 
     function updateHUD() {
         players.forEach((p, i) => {
             const n = i + 1;
             $('score-p' + n).textContent = p.score;
-            const full = CFG.MAX_HITS - p.hits;
+            const maxH = CFG.MAX_HITS;
+            const full = maxH - p.hits;
             let hearts = '';
-            for (let h = 0; h < CFG.MAX_HITS; h++) {
+            for (let h = 0; h < maxH; h++) {
                 hearts += h < full
                     ? '<span class="heart-full">&#9829;</span>'
                     : '<span class="heart-empty">&#9829;</span>';
             }
             $('hearts-p' + n).innerHTML = hearts;
             const streakEl = $('streak-p' + n);
-            streakEl.textContent = p.streak > 1 ? p.streak + 'x STREAK' : '';
+            let streakText = '';
+            if (p.combo > 1) streakText = p.combo + 'x COMBO';
+            else if (p.streak > 1) streakText = p.streak + 'x STREAK';
+            streakEl.textContent = streakText;
         });
     }
+
+    // ---- Scoring helpers ----
+    function scoreBase(p) { return p.doublePoints > 0 ? 2 : 1; }
 
     // ---- Core game actions ----
     function handleJump(playerIdx) {
@@ -154,31 +219,34 @@ const Game = (() => {
         if (now - p.lastPressTime < CFG.PRESS_COOLDOWN * 1000) return;
         p.lastPressTime = now;
 
-        // Start jump animation
         p.isJumping = true;
         p.jumpStartTime = now;
         SFX.playJump();
+        haptic(20);
 
-        // Evaluate timing
         const totalBeats = currentBeatContinuous(now);
         const nearestBeat = Math.round(totalBeats);
         if (nearestBeat < 0 || p.resolvedBeats.has(nearestBeat)) return;
 
         const beatMs = beatTimeMs(nearestBeat);
         const offsetSec = Math.abs(now - beatMs) / 1000;
-
-        // Outside timing window entirely - jump is cosmetic only
         if (offsetSec > CFG.GOOD_WINDOW) return;
 
         let judgment;
         if (offsetSec <= CFG.PERFECT_WINDOW) {
             judgment = 'PERFECT';
-            p.score += 2;
+            p.combo++;
+            p.score += 2 * p.combo * scoreBase(p);
             p.streak++;
-            SFX.playPerfect();
+            SFX.playPerfect(p.combo);
+            if (p.combo >= 5 && p.combo > lastStreakAnnounce) {
+                SFX.playAnnouncerStreak();
+                lastStreakAnnounce = p.combo;
+            }
         } else {
             judgment = 'GOOD';
-            p.score += 1;
+            p.combo = 0;
+            p.score += 1 * scoreBase(p);
             p.streak++;
         }
 
@@ -189,12 +257,8 @@ const Game = (() => {
 
         if (mode === 'online') {
             MP.send({
-                type: 'action',
-                beat: nearestBeat,
-                judgment,
-                score: p.score,
-                hits: p.hits,
-                streak: p.streak,
+                type: 'action', beat: nearestBeat, judgment,
+                score: p.score, hits: p.hits, streak: p.streak,
             });
         }
     }
@@ -208,6 +272,33 @@ const Game = (() => {
         return height >= CFG.JUMP_HEIGHT * CFG.SAFE_HEIGHT_RATIO;
     }
 
+    function applyHit(p, beatIdx) {
+        if (isDebugInvincible()) return;
+        if (p.shield) {
+            p.shield = false;
+            p.shieldTimer = 0;
+            p.judgmentText = 'BLOCKED';
+            p.judgmentTimer = 1.0;
+            return;
+        }
+        p.hits++;
+        if (isDebugMode() && debugInfHearts) p.hits = Math.min(p.hits, CFG.MAX_HITS - 1);
+        p.streak = 0;
+        p.combo = 0;
+        p.judgmentText = 'MISS';
+        p.judgmentTimer = 1.0;
+        SFX.playHit();
+        Renderer.addBladeBlood();
+        redFlashTimer = 0.3;
+        haptic(50);
+
+        // Danger announcer
+        if (p.hits === CFG.MAX_HITS - 1 && lastDangerAnnounce !== p.hits) {
+            SFX.playAnnouncerDanger();
+            lastDangerAnnounce = p.hits;
+        }
+    }
+
     function resolveUnpressedBeat(beatIdx) {
         players.forEach((p) => {
             if (p.resolvedBeats.has(beatIdx)) return;
@@ -215,48 +306,28 @@ const Game = (() => {
 
             p.resolvedBeats.add(beatIdx);
 
-            // If the player was in the air when the blade passed, they're safe
             if (wasAirborneAtBeat(p, beatIdx)) {
-                p.score += 1;
+                p.combo = 0;
+                p.score += 1 * scoreBase(p);
                 p.streak++;
                 p.bestStreak = Math.max(p.bestStreak, p.streak);
                 p.judgmentText = 'GOOD';
                 p.judgmentTimer = 1.0;
                 if (mode === 'online') {
-                    MP.send({
-                        type: 'action',
-                        beat: beatIdx,
-                        judgment: 'GOOD',
-                        score: p.score,
-                        hits: p.hits,
-                        streak: p.streak,
-                    });
+                    MP.send({ type: 'action', beat: beatIdx, judgment: 'GOOD',
+                        score: p.score, hits: p.hits, streak: p.streak });
                 }
                 return;
             }
 
-            // Player was on the ground when blade passed -- hit
-            if (isDebugInvincible()) return;
-            p.hits++;
-            if (isDebugMode() && debugInfHearts) p.hits = Math.min(p.hits, CFG.MAX_HITS - 1);
-            p.streak = 0;
-            p.judgmentText = 'MISS';
-            p.judgmentTimer = 1.0;
+            applyHit(p, beatIdx);
             p.hitTimer = 0.7;
-            shakeTimer = 0.15;
-            SFX.playHit();
-            Renderer.addBladeBlood();
+            shakeTimer = settings.shakeEnabled ? 0.15 : 0;
             spawnBloodSpurt(p);
 
             if (mode === 'online') {
-                MP.send({
-                    type: 'action',
-                    beat: beatIdx,
-                    judgment: 'MISS',
-                    score: p.score,
-                    hits: p.hits,
-                    streak: 0,
-                });
+                MP.send({ type: 'action', beat: beatIdx, judgment: 'MISS',
+                    score: p.score, hits: p.hits, streak: 0 });
             }
         });
     }
@@ -264,15 +335,16 @@ const Game = (() => {
     function checkWin() {
         for (let i = 0; i < players.length; i++) {
             if (players[i].hits >= CFG.MAX_HITS) {
-                endGame();
+                endGame(i);
                 return true;
             }
         }
         return false;
     }
 
-    function endGame() {
+    function endGame(loserIdx) {
         phase = 'results';
+        SFX.stopMusic();
 
         let winner = -1;
         if (players.length > 1) {
@@ -281,10 +353,21 @@ const Game = (() => {
             else winner = players[0].score >= players[1].score ? 0 : 1;
         }
 
-        if (winner >= 0) SFX.playWin(); else SFX.playGameOver();
+        if (winner >= 0) {
+            SFX.playWin();
+            seriesWins[winner]++;
+        } else {
+            SFX.playGameOver();
+            SFX.playAnnouncerGameOver();
+        }
+        seriesRound++;
 
         const title = $('results-title');
-        if (mode === 'practice' || mode === 'debug') {
+        if (mode === 'survival') {
+            title.textContent = 'GAME OVER';
+            const elapsed = (gameNow - survivalStartTime) / 1000;
+            saveSurvivalHighScore(players[0].score, elapsed, bpm);
+        } else if (mode === 'practice' || mode === 'debug') {
             title.textContent = 'GAME OVER';
         } else if (winner === 0) {
             title.textContent = 'PLAYER 1 WINS';
@@ -295,17 +378,47 @@ const Game = (() => {
         }
 
         let body = '';
-        players.forEach((p, i) => {
-            const isWinner = i === winner;
+        if (mode === 'survival') {
+            const elapsed = (gameNow - survivalStartTime) / 1000;
+            const hs = getSurvivalHighScore();
             body += `<div class="result-col">
-                <h3>P${i + 1}</h3>
-                <div class="final-score">${p.score}</div>
-                ${isWinner ? '<div class="winner-badge">WINNER</div>' : ''}
-                <div class="stat">Best Streak: ${p.bestStreak}</div>
-                <div class="stat">Hits Taken: ${p.hits}</div>
+                <div class="final-score">${players[0].score}</div>
+                <div class="stat">Time: ${elapsed.toFixed(1)}s</div>
+                <div class="stat">Final BPM: ${bpm}</div>
+                <div class="stat">Best Combo: ${players[0].bestStreak > 1 ? players[0].bestStreak + 'x' : '-'}</div>
+                <div class="stat" style="color:#FFD633">High Score: ${hs.score}</div>
             </div>`;
-        });
+        } else {
+            players.forEach((p, i) => {
+                const isWinner = i === winner;
+                body += `<div class="result-col">
+                    <h3>P${i + 1}</h3>
+                    <div class="final-score">${p.score}</div>
+                    ${isWinner ? '<div class="winner-badge">WINNER</div>' : ''}
+                    <div class="stat">Best Combo: ${p.bestStreak > 1 ? p.bestStreak + 'x' : '-'}</div>
+                    <div class="stat">Hits Taken: ${p.hits}</div>
+                </div>`;
+            });
+        }
+
+        // Series info
+        if (seriesRound > 0 && players.length > 1 && mode !== 'survival') {
+            const s0 = seriesWins[0], s1 = seriesWins[1];
+            body += `<div class="series-info">Round ${seriesRound} of ${SERIES_MAX} &mdash; P1 ${s0} : ${s1} P2</div>`;
+        }
+
         $('results-body').innerHTML = body;
+
+        // Update play again button text
+        const playAgainBtn = $('btn-play-again');
+        if (players.length > 1 && seriesRound < SERIES_MAX) {
+            playAgainBtn.textContent = 'NEXT ROUND';
+        } else if (seriesRound >= SERIES_MAX) {
+            playAgainBtn.textContent = 'REMATCH';
+        } else {
+            playAgainBtn.textContent = 'PLAY AGAIN';
+        }
+
         showScreen('results-screen');
 
         if (mode === 'online') {
@@ -313,9 +426,27 @@ const Game = (() => {
         }
     }
 
+    // ---- Survival high score ----
+    function saveSurvivalHighScore(score, time, finalBpm) {
+        try {
+            const hs = getSurvivalHighScore();
+            if (score > (hs.score || 0)) {
+                localStorage.setItem('clocksim_survival_hs', JSON.stringify({ score, time, bpm: finalBpm }));
+            }
+        } catch (e) { /* ignore */ }
+    }
+
+    function getSurvivalHighScore() {
+        try {
+            const raw = localStorage.getItem('clocksim_survival_hs');
+            if (!raw) return { score: 0, time: 0, bpm: 0 };
+            return JSON.parse(raw);
+        } catch (e) { return { score: 0, time: 0, bpm: 0 }; }
+    }
+
     // ---- Mini blood spurt for non-fatal hits ----
     function spawnBloodSpurt(player) {
-        const arenaW = (mode === 'practice' || mode === 'debug') ? Renderer.CW : Renderer.CW / 2;
+        const arenaW = isSinglePlayer() ? Renderer.CW : Renderer.CW / 2;
         const arenaX = (player.index === 1) ? Renderer.CW / 2 : 0;
         const cx = arenaX + arenaW / 2;
         const charSize = Sprites.spriteSize('idle');
@@ -333,43 +464,31 @@ const Game = (() => {
         }
     }
 
+    function isSinglePlayer() {
+        return mode === 'practice' || mode === 'debug' || mode === 'survival';
+    }
+
     // ---- Impact cam system ----
     function easeInQuad(t) { return t * t; }
     function easeOutQuad(t) { return 1 - (1 - t) * (1 - t); }
     function easeInOutQuad(t) { return t < 0.5 ? 2 * t * t : 1 - Math.pow(-2 * t + 2, 2) / 2; }
 
     function startImpactCam(playerIdx, beatIdx) {
-        const now = gameNow;
         impactCam = {
-            active: true,
-            phase: 'zoomin',
-            startTime: now,
-            phaseTime: now,
-            playerIdx,
-            beatIdx,
-            startAngle: pendulumAngle,
-            angle: pendulumAngle,
-            zoom: 1,
-            ragdoll: null,
-            particles: [],
-            splatters: [],
-            hitApplied: false,
+            active: true, phase: 'zoomin', startTime: gameNow, phaseTime: gameNow,
+            playerIdx, beatIdx, startAngle: pendulumAngle, angle: pendulumAngle,
+            zoom: 1, ragdoll: null, particles: [], splatters: [], hitApplied: false,
         };
     }
 
     function updateImpactCam(dt, now) {
         const elapsed = (now - impactCam.phaseTime) / 1000;
-
         switch (impactCam.phase) {
             case 'zoomin': {
                 const DUR = 0.25;
                 const t = Math.min(1, elapsed / DUR);
                 impactCam.zoom = 1 + 1.5 * easeInOutQuad(t);
-                if (t >= 1) {
-                    impactCam.phase = 'impact';
-                    impactCam.phaseTime = now;
-                    spawnImpactEffects();
-                }
+                if (t >= 1) { impactCam.phase = 'impact'; impactCam.phaseTime = now; spawnImpactEffects(); }
                 break;
             }
             case 'impact': {
@@ -377,10 +496,7 @@ const Game = (() => {
                 const t = Math.min(1, elapsed / DUR);
                 impactCam.zoom = 2.5 + 0.3 * Math.sin(t * Math.PI * 6);
                 shakeTimer = 0.15;
-                if (t >= 1) {
-                    impactCam.phase = 'aftermath';
-                    impactCam.phaseTime = now;
-                }
+                if (t >= 1) { impactCam.phase = 'aftermath'; impactCam.phaseTime = now; }
                 break;
             }
             case 'aftermath': {
@@ -389,10 +505,7 @@ const Game = (() => {
                 impactCam.zoom = 2.5 - 0.5 * easeOutQuad(t);
                 updateRagdoll(dt);
                 updateBloodParticles(dt);
-                if (t >= 1) {
-                    impactCam.phase = 'zoomout';
-                    impactCam.phaseTime = now;
-                }
+                if (t >= 1) { impactCam.phase = 'zoomout'; impactCam.phaseTime = now; }
                 break;
             }
             case 'zoomout': {
@@ -401,18 +514,15 @@ const Game = (() => {
                 impactCam.zoom = 2.0 - 1.0 * easeInOutQuad(t);
                 updateRagdoll(dt);
                 updateBloodParticles(dt);
-                if (t >= 1) {
-                    endImpactCam(now);
-                }
+                if (t >= 1) endImpactCam(now);
                 break;
             }
         }
-
         if (shakeTimer > 0) shakeTimer -= dt;
     }
 
     function spawnImpactEffects() {
-        const arenaW = (mode === 'practice' || mode === 'debug') ? Renderer.CW : Renderer.CW / 2;
+        const arenaW = isSinglePlayer() ? Renderer.CW : Renderer.CW / 2;
         const arenaX = (impactCam.playerIdx === 1) ? Renderer.CW / 2 : 0;
         const cx = arenaX + arenaW / 2;
         const charSize = Sprites.spriteSize('hit');
@@ -420,22 +530,12 @@ const Game = (() => {
         const slideDir = -bladeDir;
 
         impactCam.ragdoll = {
-            x: cx - charSize.w / 2,
-            y: Renderer.PLATFORM_Y - charSize.h,
-            vx: slideDir * (140 + Math.random() * 60),
-            vy: -(200 + Math.random() * 80),
-            rotation: 0,
-            vr: 0,
-            w: charSize.w,
-            h: charSize.h,
+            x: cx - charSize.w / 2, y: Renderer.PLATFORM_Y - charSize.h,
+            vx: slideDir * (140 + Math.random() * 60), vy: -(200 + Math.random() * 80),
+            rotation: 0, vr: 0, w: charSize.w, h: charSize.h,
             palette: impactCam.playerIdx === 0 ? 'blue' : 'red',
-            onGround: false,
-            sliding: false,
-            slideDir,
-            hitProgress: 0,
-            slideSpeed: 0,
-            trail: [],
-            trailTimer: 0,
+            onGround: false, sliding: false, slideDir, hitProgress: 0,
+            slideSpeed: 0, trail: [], trailTimer: 0,
         };
 
         const impactX = cx;
@@ -443,14 +543,10 @@ const Game = (() => {
         for (let i = 0; i < 40; i++) {
             const spread = (Math.random() - 0.5) * 2;
             impactCam.particles.push({
-                x: impactX + spread * 14,
-                y: impactY + (Math.random() - 0.5) * 20,
-                vx: spread * 300 + bladeDir * 120,
-                vy: -Math.random() * 350 - 60,
-                life: 0.8 + Math.random() * 0.6,
-                size: 1.5 + Math.random() * 4,
-                gravity: 500 + Math.random() * 200,
-                landed: false,
+                x: impactX + spread * 14, y: impactY + (Math.random() - 0.5) * 20,
+                vx: spread * 300 + bladeDir * 120, vy: -Math.random() * 350 - 60,
+                life: 0.8 + Math.random() * 0.6, size: 1.5 + Math.random() * 4,
+                gravity: 500 + Math.random() * 200, landed: false,
             });
         }
     }
@@ -461,12 +557,10 @@ const Game = (() => {
 
         if (r.sliding) {
             r.y = Renderer.PLATFORM_Y - r.w / 2 - r.h / 2;
-
             const friction = 220;
             if (Math.abs(r.slideSpeed) > 5) {
                 r.slideSpeed -= Math.sign(r.slideSpeed) * friction * dt;
                 r.x += r.slideSpeed * dt;
-
                 r.trailTimer -= dt;
                 if (r.trailTimer <= 0) {
                     r.trailTimer = 0.015;
@@ -477,69 +571,121 @@ const Game = (() => {
                     });
                 }
             } else {
-                r.slideSpeed = 0;
-                r.onGround = true;
+                r.slideSpeed = 0; r.onGround = true;
             }
             r.hitProgress = 1;
             return;
         }
 
-        // Airborne launch phase
         r.vy += 800 * dt;
         r.x += r.vx * dt;
         r.y += r.vy * dt;
 
-        const launchDur = 0.3;
-        r.hitProgress = Math.min(1, r.hitProgress + dt / launchDur);
-
+        r.hitProgress = Math.min(1, r.hitProgress + dt / 0.3);
         const targetRot = r.slideDir * (Math.PI / 2);
         r.rotation += (targetRot - r.rotation) * Math.min(1, dt * 10);
 
-        const groundY = Renderer.PLATFORM_Y - r.h;
-        if (r.y >= groundY) {
-            r.y = groundY;
-            r.vy = 0;
-            r.vx = 0;
-            r.rotation = targetRot;
-            r.sliding = true;
+        if (r.y >= Renderer.PLATFORM_Y - r.h) {
+            r.y = Renderer.PLATFORM_Y - r.h; r.vy = 0; r.vx = 0;
+            r.rotation = targetRot; r.sliding = true;
             r.slideSpeed = r.slideDir * (200 + Math.random() * 60);
-            r.hitProgress = 1;
-            shakeTimer = 0.1;
+            r.hitProgress = 1; shakeTimer = 0.1;
         }
     }
 
     function updateBloodParticles(dt) {
         impactCam.particles.forEach(p => {
             if (p.landed) return;
-            p.vy += p.gravity * dt;
-            p.x += p.vx * dt;
-            p.y += p.vy * dt;
+            p.vy += p.gravity * dt; p.x += p.vx * dt; p.y += p.vy * dt;
             p.life -= dt * 0.6;
-
             if (p.y >= Renderer.PLATFORM_Y - 1) {
-                p.y = Renderer.PLATFORM_Y - 1;
-                p.landed = true;
-                p.vx = 0;
-                p.vy = 0;
-                impactCam.splatters.push({
-                    x: p.x, y: Renderer.PLATFORM_Y - 1,
-                    size: p.size * 1.8,
-                });
+                p.y = Renderer.PLATFORM_Y - 1; p.landed = true; p.vx = 0; p.vy = 0;
+                impactCam.splatters.push({ x: p.x, y: Renderer.PLATFORM_Y - 1, size: p.size * 1.8 });
             }
         });
         impactCam.particles = impactCam.particles.filter(p => p.life > 0 || p.landed);
     }
 
     function endImpactCam(now) {
-        const pauseDuration = now - impactCam.startTime;
-        gameStartTime += pauseDuration;
-
+        gameStartTime += now - impactCam.startTime;
         impactCam.active = false;
         impactCam.phase = 'none';
         shakeTimer = 0;
-
         updateHUD();
         checkWin();
+    }
+
+    // ---- Power-ups ----
+    function spawnPowerUp(beatIdx) {
+        if (mode === 'online') return;
+        if (beatIdx - lastPowerUpBeat < POWERUP_INTERVAL) return;
+        if (Math.random() > 0.4) return;
+
+        lastPowerUpBeat = beatIdx;
+        const type = POWERUP_TYPES[Math.floor(Math.random() * POWERUP_TYPES.length)];
+        const arenaW = isSinglePlayer() ? Renderer.CW : Renderer.CW / 2;
+
+        for (let pi = 0; pi < players.length; pi++) {
+            const arenaX = pi === 1 ? Renderer.CW / 2 : 0;
+            const cx = arenaX + arenaW / 2;
+            const offset = (Math.random() - 0.5) * arenaW * 0.4;
+            powerUps.push({
+                x: cx + offset, y: Renderer.PLATFORM_Y - 10,
+                type, life: 8, playerArena: pi,
+            });
+        }
+    }
+
+    function updatePowerUps(dt) {
+        for (let i = powerUps.length - 1; i >= 0; i--) {
+            const pu = powerUps[i];
+            pu.life -= dt;
+            if (pu.life <= 0) { powerUps.splice(i, 1); continue; }
+
+            const p = players[pu.playerArena];
+            if (!p) continue;
+
+            const arenaW = isSinglePlayer() ? Renderer.CW : Renderer.CW / 2;
+            const arenaX = pu.playerArena === 1 ? Renderer.CW / 2 : 0;
+            const px = arenaX + arenaW / 2;
+
+            // When player is grounded, slide the power-up toward them
+            if (!p.isJumping) {
+                const dx = px - pu.x;
+                pu.x += dx * Math.min(1, dt * 4);
+            }
+
+            if (Math.abs(px - pu.x) < 8) {
+                collectPowerUp(p, pu);
+                powerUps.splice(i, 1);
+            }
+        }
+    }
+
+    function collectPowerUp(player, pu) {
+        switch (pu.type) {
+            case 'shield':
+                player.shield = true;
+                player.shieldTimer = 10;
+                break;
+            case 'slow':
+                if (bpm > CFG.START_BPM) {
+                    const totalBeats = currentBeatContinuous(gameNow);
+                    addBpmSegment(Math.floor(totalBeats), Math.max(CFG.START_BPM, bpm * 0.5));
+                }
+                break;
+            case 'doublePoints':
+                player.doublePoints = 5;
+                break;
+            case 'spike':
+                if (!isDebugInvincible() && !player.shield) {
+                    applyHit(player, -1);
+                    player.hitTimer = 0.7;
+                    shakeTimer = settings.shakeEnabled ? 0.15 : 0;
+                    spawnBloodSpurt(player);
+                }
+                break;
+        }
     }
 
     // ---- Countdown & Start ----
@@ -556,21 +702,26 @@ const Game = (() => {
     function startPlaying() {
         phase = 'playing';
         gameStartTime = gameNow;
+        survivalStartTime = gameNow;
         lastResolvedBeat = -1;
-        lastTickBeat = 0; // skip tick on beat 0 since GO sound covers it
+        lastTickBeat = 0;
         bpm = CFG.START_BPM;
         bpmSegments = [{ startBeat: 0, bpm, startTime: 0 }];
         $('bpm-display').textContent = bpm + ' BPM';
+        SFX.startMusic();
+        lastDangerAnnounce = -1;
+        lastStreakAnnounce = 0;
+        powerUps = [];
+        lastPowerUpBeat = 0;
+        pendulumPattern = 'normal';
+        patternStartBeat = 0;
     }
 
     // ---- Update ----
     function update(dt) {
         const now = gameNow;
 
-        if (impactCam.active) {
-            updateImpactCam(dt, now);
-            return;
-        }
+        if (impactCam.active) { updateImpactCam(dt, now); return; }
 
         // Countdown
         if (phase === 'countdown') {
@@ -581,24 +732,15 @@ const Game = (() => {
 
             if (remaining >= 1) {
                 const newDisplay = String(remaining);
-                if (countdownDisplay !== newDisplay) {
-                    countdownDisplay = newDisplay;
-                    SFX.playCountdown();
-                }
+                if (countdownDisplay !== newDisplay) { countdownDisplay = newDisplay; SFX.playCountdown(); }
             } else if (remaining === 0) {
-                if (countdownDisplay !== 'GO') {
-                    countdownDisplay = 'GO';
-                    SFX.playGo();
-                }
+                if (countdownDisplay !== 'GO') { countdownDisplay = 'GO'; SFX.playGo(); }
             }
 
-            // Pendulum preview during countdown
             const previewBeats = elapsed / beatInterval;
             pendulumAngle = Renderer.MAX_ANGLE * Math.sin(Math.PI * (previewBeats - pendulumLead));
 
-            if (elapsed >= CFG.COUNTDOWN_BEATS * beatInterval) {
-                startPlaying();
-            }
+            if (elapsed >= CFG.COUNTDOWN_BEATS * beatInterval) startPlaying();
             return;
         }
 
@@ -607,10 +749,16 @@ const Game = (() => {
         const totalBeats = currentBeatContinuous(now);
         const currentBeatInt = Math.floor(totalBeats);
 
-        // Pendulum angle (phase-shifted so blade edge arrives at character on beat)
-        pendulumAngle = Renderer.MAX_ANGLE * Math.sin(Math.PI * (totalBeats - pendulumLead));
+        // Pendulum with variable patterns
+        const displayBeats = getPendulumPhase(totalBeats);
+        pendulumAngle = Renderer.MAX_ANGLE * Math.sin(Math.PI * (displayBeats - pendulumLead));
 
-        // Metronome tick — resolve beats immediately when the blade arrives
+        // Music beat
+        if (currentBeatInt > lastTickBeat) {
+            SFX.musicBeat(currentBeatInt, bpm);
+        }
+
+        // Metronome tick
         if (currentBeatInt > lastTickBeat) {
             lastTickBeat = currentBeatInt;
             SFX.playTick();
@@ -622,34 +770,17 @@ const Game = (() => {
 
                     if (wasAirborneAtBeat(p, currentBeatInt)) {
                         p.resolvedBeats.add(currentBeatInt);
-                        p.score += 1;
+                        p.combo = 0;
+                        p.score += 1 * scoreBase(p);
                         p.streak++;
                         p.bestStreak = Math.max(p.bestStreak, p.streak);
                         p.judgmentText = 'GOOD';
                         p.judgmentTimer = 1.0;
-                        if (mode === 'online') {
-                            MP.send({ type: 'action', beat: currentBeatInt, judgment: 'GOOD',
-                                score: p.score, hits: p.hits, streak: p.streak });
-                        }
                         continue;
                     }
 
-                    // Player was on the ground — blade hits them
                     p.resolvedBeats.add(currentBeatInt);
-                    if (isDebugInvincible()) continue;
-
-                    p.hits++;
-                    if (isDebugMode() && debugInfHearts) p.hits = Math.min(p.hits, CFG.MAX_HITS - 1);
-                    p.streak = 0;
-                    p.judgmentText = 'MISS';
-                    p.judgmentTimer = 1.0;
-                    SFX.playHit();
-                    Renderer.addBladeBlood();
-
-                    if (mode === 'online') {
-                        MP.send({ type: 'action', beat: currentBeatInt, judgment: 'MISS',
-                            score: p.score, hits: p.hits, streak: 0 });
-                    }
+                    applyHit(p, currentBeatInt);
 
                     if (p.hits >= CFG.MAX_HITS) {
                         startImpactCam(i, currentBeatInt);
@@ -657,15 +788,18 @@ const Game = (() => {
                     }
 
                     p.hitTimer = 0.7;
-                    shakeTimer = 0.15;
+                    shakeTimer = settings.shakeEnabled ? 0.15 : 0;
                     spawnBloodSpurt(p);
                 }
                 lastResolvedBeat = Math.max(lastResolvedBeat, currentBeatInt);
                 if (checkWin()) return;
             }
+
+            // Power-up spawning
+            spawnPowerUp(currentBeatInt);
         }
 
-        // Safety net: resolve any beats that slipped past the tick handler
+        // Safety net
         for (let b = lastResolvedBeat + 1; b < currentBeatInt; b++) {
             resolveUnpressedBeat(b);
             lastResolvedBeat = b;
@@ -673,42 +807,52 @@ const Game = (() => {
         }
 
         // BPM ramp
+        const maxBpm = mode === 'survival' ? Infinity : CFG.MAX_BPM;
         if (currentBeatInt > 0 && currentBeatInt % CFG.BEATS_PER_LEVEL === 0) {
-            const expectedBpm = CFG.START_BPM + (currentBeatInt / CFG.BEATS_PER_LEVEL) * CFG.BPM_STEP;
-            if (bpm < expectedBpm && bpm < CFG.MAX_BPM) {
-                addBpmSegment(currentBeatInt, Math.min(expectedBpm, CFG.MAX_BPM));
+            const step = mutators.doubleRamp ? CFG.BPM_STEP * 2 : CFG.BPM_STEP;
+            const expectedBpm = CFG.START_BPM + (currentBeatInt / CFG.BEATS_PER_LEVEL) * step;
+            if (bpm < expectedBpm && bpm < maxBpm) {
+                addBpmSegment(currentBeatInt, Math.min(expectedBpm, maxBpm));
             }
         }
 
+        // Variable pendulum pattern switching at high BPM
+        if (bpm >= 140 && currentBeatInt > 0 && currentBeatInt % 16 === 0 && pendulumPattern === 'normal') {
+            const patterns = ['double', 'syncopation', 'pause'];
+            pendulumPattern = patterns[Math.floor(Math.random() * patterns.length)];
+            patternStartBeat = currentBeatInt;
+        } else if (pendulumPattern !== 'normal' && currentBeatInt - patternStartBeat >= 8) {
+            pendulumPattern = 'normal';
+        }
+
+        // Power-ups update
+        updatePowerUps(dt);
+
         // Update player animations
         players.forEach((p) => {
-            // Jump arc
             if (p.isJumping) {
                 const jElapsed = (now - p.jumpStartTime) / 1000;
                 const jProgress = jElapsed / CFG.JUMP_DURATION;
-                if (jProgress >= 1) {
-                    p.isJumping = false;
-                    p.jumpY = 0;
-                } else {
-                    p.jumpY = CFG.JUMP_HEIGHT * Math.sin(Math.PI * jProgress);
-                }
+                if (jProgress >= 1) { p.isJumping = false; p.jumpY = 0; }
+                else { p.jumpY = CFG.JUMP_HEIGHT * Math.sin(Math.PI * jProgress); }
             }
-            // Timers
             if (p.judgmentTimer > 0) p.judgmentTimer -= dt;
             if (p.hitTimer > 0) p.hitTimer -= dt;
-            // Mini blood spurt
+            if (p.emoteTimer > 0) p.emoteTimer -= dt;
+            if (p.emoteTimer <= 0) p.emote = null;
+            if (p.shieldTimer > 0) { p.shieldTimer -= dt; if (p.shieldTimer <= 0) p.shield = false; }
+            if (p.doublePoints > 0) p.doublePoints -= dt;
+
             if (p.bloodSpurt.length > 0) {
                 p.bloodSpurt.forEach(b => {
-                    b.vy += 400 * dt;
-                    b.x += b.vx * dt;
-                    b.y += b.vy * dt;
-                    b.life -= dt * 1.5;
+                    b.vy += 400 * dt; b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt * 1.5;
                 });
                 p.bloodSpurt = p.bloodSpurt.filter(b => b.life > 0);
             }
         });
 
         if (shakeTimer > 0) shakeTimer -= dt;
+        if (redFlashTimer > 0) redFlashTimer -= dt;
 
         updateHUD();
     }
@@ -724,36 +868,48 @@ const Game = (() => {
 
         update(dt);
 
-        // Gentle pendulum sway on menu/lobby screens
         let displayAngle = pendulumAngle;
-        if (phase === 'menu' || phase === 'lobby' || phase === 'results') {
+        if (phase === 'menu' || phase === 'lobby' || phase === 'results' || phase === 'paused') {
             displayAngle = Renderer.MAX_ANGLE * 0.4 * Math.sin(performance.now() / 1000);
         }
 
         Renderer.render({
-            mode,
-            phase,
-            players,
+            mode, phase, players, bpm, maxBpm: CFG.MAX_BPM,
             pendulumAngle: impactCam.active ? pendulumAngle : displayAngle,
-            countdownDisplay,
-            shakeTimer,
+            countdownDisplay, shakeTimer: settings.shakeEnabled ? shakeTimer : 0,
+            redFlashTimer,
+            invisibleBlade: mutators.invisibleBlade && bpm > 120,
+            powerUps,
             impactCam: impactCam.active ? {
-                playerIdx: impactCam.playerIdx,
-                phase: impactCam.phase,
-                zoom: impactCam.zoom,
-                ragdoll: impactCam.ragdoll,
-                particles: impactCam.particles,
-                splatters: impactCam.splatters,
+                playerIdx: impactCam.playerIdx, phase: impactCam.phase,
+                zoom: impactCam.zoom, ragdoll: impactCam.ragdoll,
+                particles: impactCam.particles, splatters: impactCam.splatters,
             } : null,
+            cameraEnabled: settings.cameraEnabled,
         });
 
         rafId = requestAnimationFrame(loop);
     }
 
+    // ---- Pause ----
+    function pauseGame() {
+        if (phase !== 'playing' || mode === 'online') return;
+        phase = 'paused';
+        pauseStartTime = gameNow;
+        $('pause-screen').classList.remove('hidden');
+    }
+
+    function resumeGame() {
+        if (phase !== 'paused') return;
+        const pauseDuration = gameNow - pauseStartTime;
+        gameStartTime += pauseDuration;
+        phase = 'playing';
+        hideOverlay('pause-screen');
+    }
+
     // ---- Online message handler ----
     function onRemoteMessage(data) {
         if (data.type === 'peer-connected') {
-            // Guest connected to host
             if (MP.isHost) {
                 setTimeout(() => {
                     MP.send({ type: 'start', bpm: CFG.START_BPM });
@@ -773,17 +929,17 @@ const Game = (() => {
             p.streak = data.streak;
             p.judgmentText = data.judgment;
             p.judgmentTimer = 1.0;
-            if (p.hits > prevHits) {
-                p.hitTimer = 0.5;
-            }
+            if (p.hits > prevHits) p.hitTimer = 0.5;
             if (data.judgment !== 'MISS' && !p.isJumping) {
                 p.isJumping = true;
                 p.jumpStartTime = gameNow;
             }
             p.resolvedBeats.add(data.beat);
-            if (p.hits >= CFG.MAX_HITS && phase === 'playing') {
-                endGame();
-            }
+            if (p.hits >= CFG.MAX_HITS && phase === 'playing') endGame();
+        }
+        if (data.type === 'emote' && players[remoteIdx]) {
+            players[remoteIdx].emote = EMOTE_LIST[data.emote] || '!';
+            players[remoteIdx].emoteTimer = 1.5;
         }
         if (data.type === 'bpm' && !MP.isHost) {
             bpmSegments.push({ startBeat: data.beat, bpm: data.bpm, startTime: beatTimeMs(data.beat) - gameStartTime });
@@ -795,29 +951,37 @@ const Game = (() => {
         }
     }
 
+    // ---- Apply difficulty ----
+    function applyDifficulty() {
+        Object.assign(CFG, CFG_DEFAULTS);
+        const preset = DIFFICULTY_PRESETS[selectedDifficulty];
+        if (preset) Object.assign(CFG, preset);
+        if (mutators.oneHitKO) CFG.MAX_HITS = 1;
+    }
+
     // ---- Game start ----
     function beginGame(gameMode) {
         mode = gameMode;
         localPlayerIdx = (mode === 'online' && !MP.isHost) ? 1 : 0;
         players = [makePlayer(0)];
-        if (mode !== 'practice' && mode !== 'debug') players.push(makePlayer(1));
+        if (mode !== 'practice' && mode !== 'debug' && mode !== 'survival') players.push(makePlayer(1));
 
-        // Show/hide P2 HUD and debug HUD
         const p2hud = $('hud-p2');
-        p2hud.style.display = (mode === 'practice' || mode === 'debug') ? 'none' : '';
-        if (mode === 'debug') {
-            showDebugHUD();
-        } else {
-            $('debug-hud').classList.add('hidden');
-        }
+        p2hud.style.display = isSinglePlayer() ? 'none' : '';
+        if (mode === 'debug') showDebugHUD();
+        else $('debug-hud').classList.add('hidden');
 
         pendulumAngle = 0;
         shakeTimer = 0;
+        redFlashTimer = 0;
         Renderer.resetRope();
         Renderer.resetBladeBlood();
-        impactCam = { active: false, phase: 'none', startTime: 0, phaseTime: 0,
+        Renderer.resetEffects();
+        impactCam = {
+            active: false, phase: 'none', startTime: 0, phaseTime: 0,
             playerIdx: -1, beatIdx: -1, startAngle: 0, angle: 0, zoom: 1,
-            ragdoll: null, particles: [], splatters: [], hitApplied: false };
+            ragdoll: null, particles: [], splatters: [], hitApplied: false,
+        };
         bpm = CFG.START_BPM;
         bpmSegments = [{ startBeat: 0, bpm, startTime: 0 }];
         $('bpm-display').textContent = bpm + ' BPM';
@@ -825,9 +989,21 @@ const Game = (() => {
         startCountdown();
     }
 
+    // ---- Mobile haptic ----
+    function haptic(ms) {
+        if (navigator.vibrate) navigator.vibrate(ms);
+    }
+
     // ---- Input ----
     function setupInput() {
         document.addEventListener('keydown', (e) => {
+            // Pause
+            if (e.key === 'Escape') {
+                if (phase === 'playing' && mode !== 'online') { e.preventDefault(); pauseGame(); return; }
+                if (phase === 'paused') { e.preventDefault(); resumeGame(); return; }
+            }
+
+            if (phase === 'paused') return;
             if (phase !== 'playing') return;
             if (e.repeat) return;
 
@@ -842,9 +1018,20 @@ const Game = (() => {
                     handleJump(1);
                 }
             }
+
+            // Emotes (1-4)
+            if (key >= '1' && key <= '4') {
+                const idx = parseInt(key) - 1;
+                const pIdx = mode === 'online' ? localPlayerIdx : 0;
+                const p = players[pIdx];
+                if (p) {
+                    p.emote = EMOTE_LIST[idx];
+                    p.emoteTimer = 1.5;
+                    if (mode === 'online') MP.send({ type: 'emote', emote: idx });
+                }
+            }
         });
 
-        // Touch support for mobile
         const canvas = $('game-canvas');
         canvas.addEventListener('touchstart', (e) => {
             e.preventDefault();
@@ -863,14 +1050,38 @@ const Game = (() => {
 
     // ---- Menu wiring ----
     function setupMenus() {
+        // Difficulty flow: clicking Practice/Local/Survival shows difficulty screen
+        function startWithDifficulty(gameMode) {
+            pendingMode = gameMode;
+            showScreen('difficulty-screen');
+            updateDifficultyUI();
+            const showPractice = gameMode === 'practice';
+            $('practice-options').classList.toggle('hidden', !showPractice);
+            if (showPractice) {
+                $('diff-bpm').value = practiceBpm;
+                $('diff-bpm-val').textContent = practiceBpm;
+                $('diff-lock-bpm').textContent = practiceBpmLock ? 'ON' : 'OFF';
+                $('diff-lock-bpm').style.color = practiceBpmLock ? '#44dd66' : '#888';
+            }
+        }
+
         $('btn-practice').addEventListener('click', () => {
             SFX.init();
-            beginGame('practice');
+            if (shouldShowTutorial()) {
+                startTutorial();
+                return;
+            }
+            startWithDifficulty('practice');
+        });
+
+        $('btn-survival').addEventListener('click', () => {
+            SFX.init();
+            startWithDifficulty('survival');
         });
 
         $('btn-local').addEventListener('click', () => {
             SFX.init();
-            beginGame('local');
+            startWithDifficulty('local');
         });
 
         $('btn-online').addEventListener('click', () => {
@@ -881,6 +1092,52 @@ const Game = (() => {
             $('lobby-status').textContent = '';
         });
 
+        // Difficulty screen
+        ['easy', 'normal', 'hard'].forEach(d => {
+            $('btn-diff-' + d).addEventListener('click', () => {
+                selectedDifficulty = d;
+                updateDifficultyUI();
+                // Sync BPM slider to the preset's starting BPM
+                const preset = DIFFICULTY_PRESETS[d];
+                const presetBpm = preset.START_BPM || CFG_DEFAULTS.START_BPM;
+                if (!$('practice-options').classList.contains('hidden')) {
+                    practiceBpm = presetBpm;
+                    $('diff-bpm').value = presetBpm;
+                    $('diff-bpm-val').textContent = presetBpm;
+                }
+            });
+        });
+
+        $('diff-bpm').addEventListener('input', (e) => {
+            practiceBpm = parseInt(e.target.value, 10);
+            $('diff-bpm-val').textContent = practiceBpm;
+        });
+
+        $('diff-lock-bpm').addEventListener('click', () => {
+            practiceBpmLock = !practiceBpmLock;
+            $('diff-lock-bpm').textContent = practiceBpmLock ? 'ON' : 'OFF';
+            $('diff-lock-bpm').style.color = practiceBpmLock ? '#44dd66' : '#888';
+        });
+
+        $('btn-diff-start').addEventListener('click', () => {
+            mutators.oneHitKO = $('mut-onehit').checked;
+            mutators.doubleRamp = $('mut-doubleramp').checked;
+            mutators.invisibleBlade = $('mut-invisible').checked;
+            applyDifficulty();
+            if (pendingMode === 'practice') {
+                CFG.START_BPM = practiceBpm;
+                if (practiceBpmLock) CFG.MAX_BPM = practiceBpm;
+            }
+            seriesWins = [0, 0];
+            seriesRound = 0;
+            beginGame(pendingMode);
+        });
+
+        $('btn-diff-back').addEventListener('click', () => {
+            showScreen('menu-screen');
+        });
+
+        // Online lobby
         $('btn-create-room').addEventListener('click', async () => {
             $('lobby-status').textContent = 'Creating room...';
             MP.onMessage(onRemoteMessage);
@@ -890,9 +1147,7 @@ const Game = (() => {
                 $('room-code').textContent = code;
                 $('room-code-display').classList.remove('hidden');
                 $('lobby-status').textContent = '';
-            } catch (err) {
-                $('lobby-status').textContent = 'Failed: ' + err;
-            }
+            } catch (err) { $('lobby-status').textContent = 'Failed: ' + err; }
         });
 
         $('btn-join-room').addEventListener('click', async () => {
@@ -904,9 +1159,7 @@ const Game = (() => {
             try {
                 await MP.joinRoom(code);
                 $('lobby-status').textContent = 'Connected! Waiting for host...';
-            } catch (err) {
-                $('lobby-status').textContent = 'Failed: ' + err;
-            }
+            } catch (err) { $('lobby-status').textContent = 'Failed: ' + err; }
         });
 
         $('btn-lobby-back').addEventListener('click', () => {
@@ -916,6 +1169,10 @@ const Game = (() => {
         });
 
         $('btn-play-again').addEventListener('click', () => {
+            if (seriesRound >= SERIES_MAX && players.length > 1) {
+                seriesWins = [0, 0];
+                seriesRound = 0;
+            }
             if (mode === 'online') {
                 MP.send({ type: 'start', bpm: CFG.START_BPM });
                 beginGame('online');
@@ -926,9 +1183,147 @@ const Game = (() => {
 
         $('btn-back-menu').addEventListener('click', () => {
             MP.disconnect();
+            SFX.stopMusic();
+            Object.assign(CFG, CFG_DEFAULTS);
+            seriesWins = [0, 0];
+            seriesRound = 0;
             phase = 'menu';
             showScreen('menu-screen');
         });
+
+        // Pause
+        $('btn-resume').addEventListener('click', resumeGame);
+        $('btn-pause-quit').addEventListener('click', () => {
+            SFX.stopMusic();
+            Object.assign(CFG, CFG_DEFAULTS);
+            phase = 'menu';
+            showScreen('menu-screen');
+        });
+
+        // Settings
+        $('btn-settings').addEventListener('click', () => {
+            SFX.init();
+            showScreen('settings-screen');
+            syncSettingsUI();
+        });
+
+        $('btn-settings-back').addEventListener('click', () => {
+            showScreen('menu-screen');
+        });
+
+        $('set-master').addEventListener('input', (e) => {
+            const v = parseInt(e.target.value, 10) / 100;
+            SFX.setMasterVolume(v);
+            $('set-master-val').textContent = e.target.value + '%';
+        });
+
+        $('set-sfx').addEventListener('input', (e) => {
+            const v = parseInt(e.target.value, 10) / 100;
+            SFX.setSfxVolume(v);
+            $('set-sfx-val').textContent = e.target.value + '%';
+        });
+
+        $('set-music').addEventListener('input', (e) => {
+            const v = parseInt(e.target.value, 10) / 100;
+            SFX.setMusicVolume(v);
+            $('set-music-val').textContent = e.target.value + '%';
+        });
+
+        $('set-shake').addEventListener('click', () => {
+            settings.shakeEnabled = !settings.shakeEnabled;
+            $('set-shake').textContent = settings.shakeEnabled ? 'ON' : 'OFF';
+            $('set-shake').style.color = settings.shakeEnabled ? '#44dd66' : '#888';
+            saveUserSettings();
+        });
+
+        $('set-camera').addEventListener('click', () => {
+            settings.cameraEnabled = !settings.cameraEnabled;
+            $('set-camera').textContent = settings.cameraEnabled ? 'ON' : 'OFF';
+            $('set-camera').style.color = settings.cameraEnabled ? '#44dd66' : '#888';
+            saveUserSettings();
+        });
+    }
+
+    function updateDifficultyUI() {
+        ['easy', 'normal', 'hard'].forEach(d => {
+            $('btn-diff-' + d).classList.toggle('btn-diff-selected', d === selectedDifficulty);
+        });
+    }
+
+    function syncSettingsUI() {
+        $('set-master').value = Math.round(SFX.getMasterVolume() * 100);
+        $('set-master-val').textContent = Math.round(SFX.getMasterVolume() * 100) + '%';
+        $('set-sfx').value = Math.round(SFX.getSfxVolume() * 100);
+        $('set-sfx-val').textContent = Math.round(SFX.getSfxVolume() * 100) + '%';
+        $('set-music').value = Math.round(SFX.getMusicVolume() * 100);
+        $('set-music-val').textContent = Math.round(SFX.getMusicVolume() * 100) + '%';
+        $('set-shake').textContent = settings.shakeEnabled ? 'ON' : 'OFF';
+        $('set-shake').style.color = settings.shakeEnabled ? '#44dd66' : '#888';
+        $('set-camera').textContent = settings.cameraEnabled ? 'ON' : 'OFF';
+        $('set-camera').style.color = settings.cameraEnabled ? '#44dd66' : '#888';
+    }
+
+    function saveUserSettings() {
+        try {
+            const existing = JSON.parse(localStorage.getItem('clocksim_settings') || '{}');
+            existing.shakeEnabled = settings.shakeEnabled;
+            existing.cameraEnabled = settings.cameraEnabled;
+            localStorage.setItem('clocksim_settings', JSON.stringify(existing));
+        } catch (e) { /* ignore */ }
+    }
+
+    function loadUserSettings() {
+        try {
+            const s = JSON.parse(localStorage.getItem('clocksim_settings') || '{}');
+            if (s.shakeEnabled != null) settings.shakeEnabled = s.shakeEnabled;
+            if (s.cameraEnabled != null) settings.cameraEnabled = s.cameraEnabled;
+        } catch (e) { /* ignore */ }
+    }
+
+    // ---- Tutorial ----
+    const TUTORIAL_STEPS = [
+        'The blade swings like a pendulum.\nDodge it by jumping at the right time!',
+        'Press SPACE or tap to jump.\nTry it now!',
+        'Time your jump for PERFECT!\nPERFECTs build combo multipliers.',
+        'Survive as long as you can!\nGood luck!',
+    ];
+
+    function startTutorial() {
+        tutorialActive = true;
+        tutorialStep = 0;
+        showTutorialStep();
+        $('tutorial-overlay').classList.remove('hidden');
+    }
+
+    function showTutorialStep() {
+        $('tutorial-text').textContent = TUTORIAL_STEPS[tutorialStep];
+        $('btn-tutorial-next').textContent = tutorialStep < TUTORIAL_STEPS.length - 1 ? 'NEXT' : 'START';
+    }
+
+    function setupTutorial() {
+        $('btn-tutorial-next').addEventListener('click', () => {
+            tutorialStep++;
+            if (tutorialStep >= TUTORIAL_STEPS.length) {
+                endTutorial();
+                return;
+            }
+            showTutorialStep();
+        });
+
+        $('btn-tutorial-skip').addEventListener('click', endTutorial);
+    }
+
+    function endTutorial() {
+        tutorialActive = false;
+        tutorialStep = -1;
+        hideOverlay('tutorial-overlay');
+        try { localStorage.setItem('clocksim_tutorial_done', '1'); } catch (e) { /* ignore */ }
+        applyDifficulty();
+        beginGame('practice');
+    }
+
+    function shouldShowTutorial() {
+        try { return !localStorage.getItem('clocksim_tutorial_done'); } catch (e) { return false; }
     }
 
     // ---- Debug mode ----
@@ -941,12 +1336,8 @@ const Game = (() => {
     function isDebugMode() { return mode === 'debug'; }
 
     function setupDebug() {
-        // Secret code listener — works on menu and results screens
         document.addEventListener('keydown', (e) => {
-            if (phase !== 'menu' && phase !== 'results') {
-                debugKeyBuffer = '';
-                return;
-            }
+            if (phase !== 'menu' && phase !== 'results') { debugKeyBuffer = ''; return; }
             if (e.key.length === 1) {
                 debugKeyBuffer += e.key.toLowerCase();
                 if (debugKeyBuffer.length > 10) debugKeyBuffer = debugKeyBuffer.slice(-10);
@@ -976,42 +1367,24 @@ const Game = (() => {
             $('debug-bpm-val').textContent = newBpm;
             if (phase === 'playing' && !impactCam.active) {
                 const totalBeats = currentBeatContinuous(gameNow);
-                const currentBeatInt = Math.floor(totalBeats);
-                addBpmSegment(currentBeatInt, newBpm);
+                addBpmSegment(Math.floor(totalBeats), newBpm);
             }
         });
 
-        $('debug-toggle-damage').addEventListener('click', () => {
-            debugDamageEnabled = !debugDamageEnabled;
-            syncDebugToggles();
-        });
-
-        $('debug-toggle-infhearts').addEventListener('click', () => {
-            debugInfHearts = !debugInfHearts;
-            syncDebugToggles();
-        });
+        $('debug-toggle-damage').addEventListener('click', () => { debugDamageEnabled = !debugDamageEnabled; syncDebugToggles(); });
+        $('debug-toggle-infhearts').addEventListener('click', () => { debugInfHearts = !debugInfHearts; syncDebugToggles(); });
 
         $('debug-kill').addEventListener('click', () => {
-            if (phase === 'playing' && players[0] && !impactCam.active) {
-                debugKillPlayer(0);
-            }
+            if (phase === 'playing' && players[0] && !impactCam.active) debugKillPlayer(0);
         });
-
-        $('debug-restart').addEventListener('click', () => {
-            beginGame('debug');
-        });
-
+        $('debug-restart').addEventListener('click', () => beginGame('debug'));
         $('debug-quit').addEventListener('click', () => {
             $('debug-hud').classList.add('hidden');
+            SFX.stopMusic();
             phase = 'menu';
             showScreen('menu-screen');
         });
-
-        $('debug-cfg-reset').addEventListener('click', () => {
-            Object.assign(CFG, CFG_DEFAULTS);
-            buildCfgInputs();
-        });
-
+        $('debug-cfg-reset').addEventListener('click', () => { Object.assign(CFG, CFG_DEFAULTS); buildCfgInputs(); });
         buildCfgInputs();
     }
 
@@ -1023,22 +1396,13 @@ const Game = (() => {
         Object.keys(CFG).forEach(key => {
             const row = document.createElement('div');
             row.className = 'debug-cfg-row';
-
             const label = document.createElement('label');
-            label.textContent = key;
-            label.title = key;
-
+            label.textContent = key; label.title = key;
             const input = document.createElement('input');
-            input.type = 'number';
-            input.value = CFG[key];
+            input.type = 'number'; input.value = CFG[key];
             input.step = Number.isInteger(CFG_DEFAULTS[key]) ? '1' : '0.01';
-            input.addEventListener('change', () => {
-                const v = parseFloat(input.value);
-                if (!isNaN(v)) CFG[key] = v;
-            });
-
-            row.appendChild(label);
-            row.appendChild(input);
+            input.addEventListener('change', () => { const v = parseFloat(input.value); if (!isNaN(v)) CFG[key] = v; });
+            row.appendChild(label); row.appendChild(input);
             list.appendChild(row);
         });
     }
@@ -1053,8 +1417,7 @@ const Game = (() => {
     }
 
     function showDebugHUD() {
-        const hud = $('debug-hud');
-        hud.classList.remove('hidden');
+        $('debug-hud').classList.remove('hidden');
         $('debug-speed').value = Math.round(debugSpeed * 100);
         $('debug-speed-val').textContent = debugSpeed.toFixed(1) + 'x';
         $('debug-bpm').value = bpm;
@@ -1064,33 +1427,28 @@ const Game = (() => {
 
     function debugKillPlayer(idx) {
         const p = players[idx];
-        p.hits = CFG.MAX_HITS;
-        p.streak = 0;
-        p.judgmentText = 'MISS';
-        p.judgmentTimer = 1.0;
-        SFX.playHit();
-        Renderer.addBladeBlood();
-
-        const totalBeats = currentBeatContinuous(gameNow);
-        const beatIdx = Math.round(totalBeats);
-        startImpactCam(idx, beatIdx);
+        p.hits = CFG.MAX_HITS; p.streak = 0;
+        p.judgmentText = 'MISS'; p.judgmentTimer = 1.0;
+        SFX.playHit(); Renderer.addBladeBlood();
+        startImpactCam(idx, Math.round(currentBeatContinuous(gameNow)));
     }
 
-    function isDebugInvincible() {
-        return isDebugMode() && !debugDamageEnabled;
-    }
+    function isDebugInvincible() { return isDebugMode() && !debugDamageEnabled; }
 
     // ---- Init ----
     function init() {
         const canvas = $('game-canvas');
         Renderer.init(canvas);
+        loadUserSettings();
         setupInput();
         setupMenus();
         setupDebug();
+        setupTutorial();
         showScreen('menu-screen');
         lastFrameTime = performance.now();
         gameNow = performance.now();
         rafId = requestAnimationFrame(loop);
+
     }
 
     document.addEventListener('DOMContentLoaded', init);

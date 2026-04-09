@@ -1,6 +1,5 @@
 const Renderer = (() => {
     let canvas, ctx;
-    let bgCache = null;
     const CW = 800;
     const CH = 500;
     const PLATFORM_Y = 470;
@@ -8,6 +7,11 @@ const Renderer = (() => {
     const PIVOT_Y = 10;
     const ARM_LEN = PLATFORM_Y - PIVOT_Y;
     const MAX_ANGLE = Math.PI / 3.2;
+
+    // ---- Parallax background layers ----
+    let bgFar = null;   // sky + stars
+    let bgMid = null;   // wall
+    let bgNear = null;  // torches + details
 
     // ---- Blade blood accumulation ----
     let bladeBloodSplatters = [];
@@ -27,9 +31,7 @@ const Renderer = (() => {
         }
     }
 
-    function resetBladeBlood() {
-        bladeBloodSplatters = [];
-    }
+    function resetBladeBlood() { bladeBloodSplatters = []; }
 
     function drawBladeBlood() {
         if (bladeBloodSplatters.length === 0) return;
@@ -37,6 +39,23 @@ const Renderer = (() => {
             ctx.fillStyle = s.color;
             ctx.fillRect(s.x - s.size / 2, s.y - s.size / 2, s.size, s.size);
         }
+    }
+
+    // ---- Blade trail ----
+    let bladeTrail = [];
+    const TRAIL_MAX = 12;
+
+    // ---- Smooth camera state ----
+    let cameraOffsetY = 0;
+    let cameraZoom = 1;
+
+    // ---- Screen effects state ----
+    let vignetteGrad = null;
+
+    function resetEffects() {
+        bladeTrail = [];
+        cameraOffsetY = 0;
+        cameraZoom = 1;
     }
 
     // ---- Rope (chain) simulation ----
@@ -48,32 +67,28 @@ const Renderer = (() => {
     const ROPE_ITERATIONS = 12;
     const ROPE_DAMPING = 0.92;
     const ROPE_STIFFNESS = 0.4;
-    let ropePoints = [null, null];
-    let ropeLastTime = [0, 0];
+    let ropePoints = null;
+    let ropeLastTime = 0;
 
-    function initRope(idx, anchorX, anchorY, endX, endY) {
-        ropePoints[idx] = [];
+    function initRope(anchorX, anchorY, endX, endY) {
+        ropePoints = [];
         for (let i = 0; i <= ROPE_SEGS; i++) {
             const t = i / ROPE_SEGS;
             const x = anchorX + (endX - anchorX) * t;
             const y = anchorY + (endY - anchorY) * t;
-            ropePoints[idx].push({ x, y, ox: x, oy: y });
+            ropePoints.push({ x, y, ox: x, oy: y });
         }
-        ropeLastTime[idx] = performance.now();
+        ropeLastTime = performance.now();
     }
 
-    function updateRope(idx, anchorX, anchorY, endX, endY) {
-        if (!ropePoints[idx]) {
-            initRope(idx, anchorX, anchorY, endX, endY);
-            return;
-        }
+    function updateRope(anchorX, anchorY, endX, endY) {
+        if (!ropePoints) { initRope(anchorX, anchorY, endX, endY); return; }
 
         const now = performance.now();
-        const dt = Math.min(0.033, (now - ropeLastTime[idx]) / 1000);
-        ropeLastTime[idx] = now;
+        const dt = Math.min(0.033, (now - ropeLastTime) / 1000);
+        ropeLastTime = now;
         if (dt <= 0) return;
 
-        // Compute the straight-line positions for stiffness blending
         const restPoints = [];
         for (let i = 0; i <= ROPE_SEGS; i++) {
             const t = i / ROPE_SEGS;
@@ -83,74 +98,62 @@ const Renderer = (() => {
             });
         }
 
-        // Verlet integration for interior points
         for (let i = 1; i < ROPE_SEGS; i++) {
-            const p = ropePoints[idx][i];
+            const p = ropePoints[i];
             const vx = (p.x - p.ox) * ROPE_DAMPING;
             const vy = (p.y - p.oy) * ROPE_DAMPING;
-            p.ox = p.x;
-            p.oy = p.y;
-            p.x += vx;
-            p.y += vy + ROPE_GRAVITY * dt * dt;
-
-            // Pull toward the straight-line rest position for stiffness
+            p.ox = p.x; p.oy = p.y;
+            p.x += vx; p.y += vy + ROPE_GRAVITY * dt * dt;
             p.x += (restPoints[i].x - p.x) * ROPE_STIFFNESS;
             p.y += (restPoints[i].y - p.y) * ROPE_STIFFNESS;
         }
 
-        // Pin endpoints
-        ropePoints[idx][0].x = ropePoints[idx][0].ox = anchorX;
-        ropePoints[idx][0].y = ropePoints[idx][0].oy = anchorY;
-        ropePoints[idx][ROPE_SEGS].x = ropePoints[idx][ROPE_SEGS].ox = endX;
-        ropePoints[idx][ROPE_SEGS].y = ropePoints[idx][ROPE_SEGS].oy = endY;
+        ropePoints[0].x = ropePoints[0].ox = anchorX;
+        ropePoints[0].y = ropePoints[0].oy = anchorY;
+        ropePoints[ROPE_SEGS].x = ropePoints[ROPE_SEGS].ox = endX;
+        ropePoints[ROPE_SEGS].y = ropePoints[ROPE_SEGS].oy = endY;
 
-        // Distance constraints
         for (let iter = 0; iter < ROPE_ITERATIONS; iter++) {
             for (let i = 0; i < ROPE_SEGS; i++) {
-                const a = ropePoints[idx][i];
-                const b = ropePoints[idx][i + 1];
+                const a = ropePoints[i];
+                const b = ropePoints[i + 1];
                 const dx = b.x - a.x;
                 const dy = b.y - a.y;
                 const dist = Math.sqrt(dx * dx + dy * dy) || 0.001;
                 const diff = (dist - ROPE_SEG_LEN) / dist * 0.5;
                 const ox = dx * diff;
                 const oy = dy * diff;
-
                 if (i > 0) { a.x += ox; a.y += oy; }
                 if (i < ROPE_SEGS - 1) { b.x -= ox; b.y -= oy; }
             }
-            ropePoints[idx][0].x = anchorX;
-            ropePoints[idx][0].y = anchorY;
-            ropePoints[idx][ROPE_SEGS].x = endX;
-            ropePoints[idx][ROPE_SEGS].y = endY;
+            ropePoints[0].x = anchorX; ropePoints[0].y = anchorY;
+            ropePoints[ROPE_SEGS].x = endX; ropePoints[ROPE_SEGS].y = endY;
         }
 
-        // Blend the last few points toward a straight line into the endpoint
-        // so the rope always visually connects to the blade
         const BLEND_COUNT = 3;
         for (let i = 1; i <= BLEND_COUNT; i++) {
-            const segIdx = ROPE_SEGS - i;
-            if (segIdx <= 0) break;
+            const idx = ROPE_SEGS - i;
+            if (idx <= 0) break;
             const blend = i / (BLEND_COUNT + 1);
-            const target = ropePoints[idx][segIdx + 1] || { x: endX, y: endY };
-            const prev = ropePoints[idx][segIdx - 1];
+            const target = ropePoints[idx + 1] || { x: endX, y: endY };
+            const prev = ropePoints[idx - 1];
             const straightX = prev.x + (target.x - prev.x) * 0.5;
             const straightY = prev.y + (target.y - prev.y) * 0.5;
-            ropePoints[idx][segIdx].x += (straightX - ropePoints[idx][segIdx].x) * blend;
-            ropePoints[idx][segIdx].y += (straightY - ropePoints[idx][segIdx].y) * blend;
+            ropePoints[idx].x += (straightX - ropePoints[idx].x) * blend;
+            ropePoints[idx].y += (straightY - ropePoints[idx].y) * blend;
         }
     }
 
-    function drawRope(idx) {
-        if (!ropePoints[idx]) return;
+    function drawRope() {
+        if (!ropePoints) return;
         ctx.strokeStyle = '#555566';
         ctx.lineWidth = 2.5;
         ctx.lineCap = 'round';
         ctx.lineJoin = 'round';
         ctx.beginPath();
-        ctx.moveTo(ropePoints[idx][0].x, ropePoints[idx][0].y);
+        ctx.moveTo(ropePoints[0].x, ropePoints[0].y);
         for (let i = 1; i <= ROPE_SEGS; i++) {
-            ctx.lineTo(ropePoints[idx][i].x, ropePoints[idx][i].y);
+            ctx.lineTo(ropePoints[i].x, ropePoints[i].y);
         }
         ctx.stroke();
     }
@@ -160,58 +163,83 @@ const Renderer = (() => {
         ctx = canvas.getContext('2d');
         canvas.width = CW;
         canvas.height = CH;
-        buildBackground();
+        buildParallaxLayers();
+        buildVignette();
     }
 
-    function buildBackground() {
-        bgCache = document.createElement('canvas');
-        bgCache.width = CW;
-        bgCache.height = CH;
-        const bg = bgCache.getContext('2d');
+    // ---- Parallax background layers ----
+    function buildParallaxLayers() {
+        const rng = mulberry32(42);
 
-        // Sky gradient
-        const grad = bg.createLinearGradient(0, 0, 0, CH);
+        // Far layer: sky gradient + stars
+        bgFar = document.createElement('canvas');
+        bgFar.width = CW + 40; bgFar.height = CH;
+        const far = bgFar.getContext('2d');
+        const grad = far.createLinearGradient(0, 0, 0, CH);
         grad.addColorStop(0, '#08081a');
         grad.addColorStop(0.5, '#0e0e28');
         grad.addColorStop(1, '#141432');
-        bg.fillStyle = grad;
-        bg.fillRect(0, 0, CW, CH);
-
-        // Stars
-        const rng = mulberry32(42);
+        far.fillStyle = grad;
+        far.fillRect(0, 0, bgFar.width, CH);
         for (let i = 0; i < 60; i++) {
-            const sx = rng() * CW;
+            const sx = rng() * bgFar.width;
             const sy = rng() * CH * 0.6;
             const brightness = 80 + Math.floor(rng() * 120);
             const size = rng() > 0.85 ? 2 : 1;
-            bg.fillStyle = `rgb(${brightness},${brightness},${brightness + 40})`;
-            bg.fillRect(Math.floor(sx), Math.floor(sy), size, size);
+            far.fillStyle = `rgb(${brightness},${brightness},${brightness + 40})`;
+            far.fillRect(Math.floor(sx), Math.floor(sy), size, size);
         }
 
-        // Distant wall silhouettes
-        bg.fillStyle = '#0c0c22';
-        drawWall(bg, 0, CH * 0.35, CW, CH * 0.65);
+        // Mid layer: wall silhouettes
+        bgMid = document.createElement('canvas');
+        bgMid.width = CW + 60; bgMid.height = CH;
+        const mid = bgMid.getContext('2d');
+        mid.fillStyle = '#0c0c22';
+        drawWall(mid, 0, CH * 0.35, bgMid.width, CH * 0.65);
 
-        // Torches
+        // Near layer: torches + decorative
+        bgNear = document.createElement('canvas');
+        bgNear.width = CW + 80; bgNear.height = CH;
+        const near = bgNear.getContext('2d');
         [[100, 170], [300, 160], [500, 165], [700, 155]].forEach(([tx, ty]) => {
-            bg.fillStyle = '#332211';
-            bg.fillRect(tx - 1, ty, 3, 20);
-            bg.fillStyle = '#ff8833';
-            bg.fillRect(tx - 2, ty - 4, 5, 5);
-            bg.fillStyle = '#ffcc44';
-            bg.fillRect(tx - 1, ty - 3, 3, 3);
-            // Glow
-            const glow = bg.createRadialGradient(tx, ty, 2, tx, ty, 40);
+            near.fillStyle = '#332211';
+            near.fillRect(tx - 1, ty, 3, 20);
+            near.fillStyle = '#ff8833';
+            near.fillRect(tx - 2, ty - 4, 5, 5);
+            near.fillStyle = '#ffcc44';
+            near.fillRect(tx - 1, ty - 3, 3, 3);
+            const glow = near.createRadialGradient(tx, ty, 2, tx, ty, 40);
             glow.addColorStop(0, 'rgba(255,140,40,0.12)');
             glow.addColorStop(1, 'rgba(255,100,20,0)');
-            bg.fillStyle = glow;
-            bg.fillRect(tx - 40, ty - 40, 80, 80);
+            near.fillStyle = glow;
+            near.fillRect(tx - 40, ty - 40, 80, 80);
         });
+        // Hanging chains decorative
+        for (let i = 0; i < 5; i++) {
+            const cx = 50 + i * 180;
+            near.strokeStyle = '#333344';
+            near.lineWidth = 1;
+            near.beginPath();
+            near.moveTo(cx, 0);
+            near.lineTo(cx + 3, 30 + rng() * 20);
+            near.stroke();
+        }
+    }
+
+    function buildVignette() {
+        const vc = document.createElement('canvas');
+        vc.width = CW; vc.height = CH;
+        const vctx = vc.getContext('2d');
+        const grad = vctx.createRadialGradient(CW / 2, CH / 2, CW * 0.25, CW / 2, CH / 2, CW * 0.6);
+        grad.addColorStop(0, 'rgba(0,0,0,0)');
+        grad.addColorStop(1, 'rgba(0,0,0,0.7)');
+        vctx.fillStyle = grad;
+        vctx.fillRect(0, 0, CW, CH);
+        vignetteGrad = vc;
     }
 
     function drawWall(bg, x, y, w, h) {
         bg.fillRect(x, y, w, h);
-        // Brick pattern
         bg.fillStyle = '#0a0a1e';
         for (let row = 0; row < h; row += 16) {
             const offset = (Math.floor(row / 16) % 2) * 16;
@@ -242,16 +270,16 @@ const Renderer = (() => {
             ctx.fillRect(tx, PLATFORM_Y + 2, tw, tileH - 4);
             ctx.fillStyle = '#554433';
             ctx.fillRect(tx, PLATFORM_Y + tileH - 2, tw, 2);
-            // Mortar lines
             ctx.fillStyle = '#554433';
             ctx.fillRect(tx, PLATFORM_Y, 1, tileH);
         }
-        // Bottom fill
         ctx.fillStyle = '#2a2420';
         ctx.fillRect(x, PLATFORM_Y + PLATFORM_H, w, CH - PLATFORM_Y - PLATFORM_H);
     }
 
-    function renderPendulum(centerX, angle, ropeIdx) {
+    function renderPendulum(centerX, angle, invisible) {
+        if (invisible) return;
+
         const tipX = centerX + ARM_LEN * Math.sin(angle);
         const tipY = PIVOT_Y + ARM_LEN * Math.cos(angle);
         const nearCenter = 1 - Math.min(1, Math.abs(angle) / (MAX_ANGLE * 0.15));
@@ -259,19 +287,34 @@ const Renderer = (() => {
         const bladeX = tipX - BLADE_OFFSET * Math.sin(angle);
         const bladeY = tipY - BLADE_OFFSET * Math.cos(angle);
 
-        // Rope ends at blade center (local y=21, midpoint of the 42px crescent)
         const BLADE_CENTER = 21;
         const ropeTipX = bladeX + BLADE_CENTER * Math.sin(angle);
         const ropeTipY = bladeY + BLADE_CENTER * Math.cos(angle);
-        updateRope(ropeIdx, centerX, PIVOT_Y, ropeTipX, ropeTipY);
-        drawRope(ropeIdx);
+        updateRope(centerX, PIVOT_Y, ropeTipX, ropeTipY);
+        drawRope();
 
-        // Draw blade
+        // Blade trail
+        bladeTrail.push({ x: tipX, y: tipY });
+        if (bladeTrail.length > TRAIL_MAX) bladeTrail.shift();
+
+        // Draw trail
+        if (bladeTrail.length > 1) {
+            for (let i = 1; i < bladeTrail.length; i++) {
+                const a = i / bladeTrail.length;
+                ctx.strokeStyle = `rgba(200,210,230,${a * 0.15})`;
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                ctx.moveTo(bladeTrail[i - 1].x, bladeTrail[i - 1].y);
+                ctx.lineTo(bladeTrail[i].x, bladeTrail[i].y);
+                ctx.stroke();
+            }
+        }
+
+        // Blade
         ctx.save();
         ctx.translate(bladeX, bladeY);
         ctx.rotate(-angle * 0.6);
 
-        // Crescent blade body (facing downward from attachment at y=0)
         ctx.fillStyle = '#778899';
         ctx.beginPath();
         ctx.moveTo(-32, 0);
@@ -280,7 +323,6 @@ const Renderer = (() => {
         ctx.closePath();
         ctx.fill();
 
-        // Inner steel highlight
         ctx.fillStyle = '#99aabb';
         ctx.beginPath();
         ctx.moveTo(-26, 1);
@@ -289,7 +331,6 @@ const Renderer = (() => {
         ctx.closePath();
         ctx.fill();
 
-        // Cutting edge gleam (along bottom curve)
         ctx.strokeStyle = nearCenter > 0.3
             ? `rgba(240,248,255,${0.4 + 0.6 * nearCenter})`
             : 'rgba(200,215,230,0.4)';
@@ -299,7 +340,6 @@ const Renderer = (() => {
         ctx.quadraticCurveTo(0, 40, 30, 1);
         ctx.stroke();
 
-        // Spine detail (along top/back)
         ctx.strokeStyle = '#556677';
         ctx.lineWidth = 1;
         ctx.beginPath();
@@ -307,9 +347,7 @@ const Renderer = (() => {
         ctx.quadraticCurveTo(0, 13, 24, 2);
         ctx.stroke();
 
-        // Blood accumulation on blade edge
         drawBladeBlood();
-
         ctx.restore();
 
         // Pivot gear
@@ -323,17 +361,6 @@ const Renderer = (() => {
         ctx.fill();
     }
 
-    function lerpColor(a, b, t) {
-        const ah = parseInt(a.slice(1), 16);
-        const bh = parseInt(b.slice(1), 16);
-        const ar = ah >> 16, ag = (ah >> 8) & 0xff, ab = ah & 0xff;
-        const br = bh >> 16, bg = (bh >> 8) & 0xff, bb = bh & 0xff;
-        const rr = Math.round(ar + (br - ar) * t);
-        const rg = Math.round(ag + (bg - ag) * t);
-        const rb = Math.round(ab + (bb - ab) * t);
-        return `rgb(${rr},${rg},${rb})`;
-    }
-
     function renderCharacter(player, arenaX, arenaW) {
         const palette = player.index === 0 ? 'blue' : 'red';
         const state = player.hitTimer > 0 ? 'hit' : (player.isJumping ? 'jump' : 'idle');
@@ -342,6 +369,17 @@ const Renderer = (() => {
         const charX = cx - size.w / 2;
         const baseY = PLATFORM_Y - size.h;
         const charY = baseY - player.jumpY;
+
+        // Shield glow
+        if (player.shield) {
+            ctx.save();
+            ctx.globalAlpha = 0.25 + 0.1 * Math.sin(performance.now() / 200);
+            ctx.fillStyle = '#FFD633';
+            ctx.beginPath();
+            ctx.arc(cx, charY + size.h / 2, size.w * 0.7, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.restore();
+        }
 
         // Shadow
         const shadowScale = 1 - player.jumpY / 50;
@@ -378,17 +416,108 @@ const Renderer = (() => {
             ctx.globalAlpha = alpha;
             ctx.font = '16px "Press Start 2P", monospace';
             ctx.textAlign = 'center';
-            if (player.judgmentText === 'PERFECT') {
-                ctx.fillStyle = '#FFD633';
-            } else if (player.judgmentText === 'GOOD') {
-                ctx.fillStyle = '#44DD66';
-            } else {
-                ctx.fillStyle = '#EE4444';
+            if (player.judgmentText === 'PERFECT') ctx.fillStyle = '#FFD633';
+            else if (player.judgmentText === 'GOOD') ctx.fillStyle = '#44DD66';
+            else if (player.judgmentText === 'BLOCKED') ctx.fillStyle = '#4488FF';
+            else ctx.fillStyle = '#EE4444';
+
+            let label = player.judgmentText;
+            if (player.judgmentText === 'PERFECT' && player.combo > 1) {
+                label += ' ' + player.combo + 'x';
             }
-            ctx.fillText(player.judgmentText, cx, baseY - 30 - yOff);
+            ctx.fillText(label, cx, baseY - 30 - yOff);
             ctx.globalAlpha = 1;
             ctx.textAlign = 'start';
         }
+
+        // Emote bubble
+        if (player.emote && player.emoteTimer > 0) {
+            const ea = Math.min(1, player.emoteTimer * 1.5);
+            ctx.globalAlpha = ea;
+            ctx.font = '10px "Press Start 2P", monospace';
+            ctx.textAlign = 'center';
+            const bubbleY = baseY - size.h - 20;
+            ctx.fillStyle = 'rgba(0,0,0,0.6)';
+            const tw = ctx.measureText(player.emote).width + 12;
+            ctx.fillRect(cx - tw / 2, bubbleY - 10, tw, 16);
+            ctx.fillStyle = '#fff';
+            ctx.fillText(player.emote, cx, bubbleY + 2);
+            ctx.globalAlpha = 1;
+            ctx.textAlign = 'start';
+        }
+
+        // Double points indicator
+        if (player.doublePoints > 0) {
+            ctx.globalAlpha = 0.7;
+            ctx.font = '7px "Press Start 2P", monospace';
+            ctx.textAlign = 'center';
+            ctx.fillStyle = '#FFD633';
+            ctx.fillText('2x PTS', cx, baseY - 8);
+            ctx.globalAlpha = 1;
+            ctx.textAlign = 'start';
+        }
+    }
+
+    function renderPowerUps(pups, arenaX, arenaW, playerArena) {
+        if (!pups || pups.length === 0) return;
+        pups.forEach(pu => {
+            if (pu.playerArena !== playerArena) return;
+            const blink = pu.life < 2 && Math.floor(pu.life * 5) % 2 === 0;
+            if (blink) return;
+
+            ctx.save();
+            const s = 10;
+            const px = pu.x;
+            const py = pu.y;
+
+            switch (pu.type) {
+                case 'shield':
+                    ctx.fillStyle = '#FFD633';
+                    ctx.beginPath();
+                    ctx.moveTo(px, py - s);
+                    ctx.lineTo(px + s * 0.7, py - s * 0.3);
+                    ctx.lineTo(px + s * 0.5, py + s * 0.5);
+                    ctx.lineTo(px, py + s * 0.8);
+                    ctx.lineTo(px - s * 0.5, py + s * 0.5);
+                    ctx.lineTo(px - s * 0.7, py - s * 0.3);
+                    ctx.closePath();
+                    ctx.fill();
+                    break;
+                case 'slow':
+                    ctx.fillStyle = '#4488FF';
+                    ctx.beginPath();
+                    ctx.arc(px, py, s * 0.6, 0, Math.PI * 2);
+                    ctx.fill();
+                    ctx.strokeStyle = '#fff';
+                    ctx.lineWidth = 1;
+                    ctx.beginPath();
+                    ctx.moveTo(px, py - s * 0.3);
+                    ctx.lineTo(px, py);
+                    ctx.lineTo(px + s * 0.25, py + s * 0.15);
+                    ctx.stroke();
+                    break;
+                case 'doublePoints':
+                    ctx.fillStyle = '#44DD66';
+                    ctx.font = '8px "Press Start 2P", monospace';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('2x', px, py + 3);
+                    ctx.textAlign = 'start';
+                    break;
+                case 'spike':
+                    ctx.fillStyle = '#EE4444';
+                    ctx.beginPath();
+                    for (let j = 0; j < 5; j++) {
+                        const a = (j / 5) * Math.PI * 2 - Math.PI / 2;
+                        const r = j % 2 === 0 ? s * 0.7 : s * 0.3;
+                        if (j === 0) ctx.moveTo(px + r * Math.cos(a), py + r * Math.sin(a));
+                        else ctx.lineTo(px + r * Math.cos(a), py + r * Math.sin(a));
+                    }
+                    ctx.closePath();
+                    ctx.fill();
+                    break;
+            }
+            ctx.restore();
+        });
     }
 
     function renderDivider() {
@@ -397,7 +526,6 @@ const Renderer = (() => {
         ctx.fillRect(x - 2, 0, 4, CH);
         ctx.fillStyle = '#333355';
         ctx.fillRect(x - 1, 0, 2, CH);
-        // Decorative dots
         for (let y = 10; y < CH; y += 30) {
             ctx.fillStyle = '#444466';
             ctx.fillRect(x - 2, y, 4, 4);
@@ -422,7 +550,6 @@ const Renderer = (() => {
     function renderRagdoll(r) {
         if (!r) return;
 
-        // Blood trail smear behind sliding character
         if (r.trail && r.trail.length > 0) {
             const len = r.trail.length;
             for (let i = 0; i < len; i++) {
@@ -471,13 +598,29 @@ const Renderer = (() => {
         ctx.globalAlpha = 1;
     }
 
-    function renderArena(player, arenaX, arenaW, pendulumAngle, icam, ropeIdx) {
+    function renderArena(player, arenaX, arenaW, pendAngle, icam, state) {
         ctx.save();
         ctx.beginPath();
         ctx.rect(arenaX, 0, arenaW, CH);
         ctx.clip();
 
         const centerX = arenaX + arenaW / 2;
+
+        // Smooth camera
+        if (state && state.cameraEnabled && !icam) {
+            const targetY = player.jumpY > 5 ? -player.jumpY * 0.15 : 0;
+            cameraOffsetY += (targetY - cameraOffsetY) * 0.05;
+
+            const bpmRatio = (state.bpm || 60) / (state.maxBpm || 180);
+            const targetZoom = bpmRatio > 0.66 ? 1 - (bpmRatio - 0.66) * 0.1 : 1;
+            cameraZoom += (targetZoom - cameraZoom) * 0.03;
+
+            const focusX = centerX;
+            const focusY = PLATFORM_Y * 0.8;
+            ctx.translate(focusX, focusY);
+            ctx.scale(cameraZoom, cameraZoom);
+            ctx.translate(-focusX, -focusY + cameraOffsetY);
+        }
 
         if (icam) {
             const focusX = centerX;
@@ -489,11 +632,12 @@ const Renderer = (() => {
 
         renderPlatform(arenaX, arenaW);
 
-        if (icam) {
-            renderSplatters(icam.splatters);
-        }
+        if (icam) renderSplatters(icam.splatters);
 
-        renderPendulum(centerX, pendulumAngle, ropeIdx);
+        // Power-ups
+        renderPowerUps(state ? state.powerUps : null, arenaX, arenaW, player.index);
+
+        renderPendulum(centerX, pendAngle, state && state.invisibleBlade);
 
         if (icam && icam.ragdoll) {
             renderRagdoll(icam.ragdoll);
@@ -501,36 +645,65 @@ const Renderer = (() => {
             renderCharacter(player, arenaX, arenaW);
         }
 
-        if (icam) {
-            renderBloodParticles(icam.particles);
-        }
+        if (icam) renderBloodParticles(icam.particles);
 
         ctx.restore();
     }
 
+    function renderParallaxBg(angle) {
+        const a = angle || 0;
+        ctx.drawImage(bgFar, -20 + a * 3, 0);
+        ctx.drawImage(bgMid, -30 + a * 8, 0);
+        ctx.drawImage(bgNear, -40 + a * 15, 0);
+    }
+
+    function renderVignette(bpmRatio) {
+        if (!vignetteGrad) return;
+        const intensity = Math.max(0, Math.min(1, (bpmRatio - 0.3) * 1.2));
+        if (intensity <= 0) return;
+        ctx.globalAlpha = intensity * 0.5;
+        ctx.drawImage(vignetteGrad, 0, 0);
+        ctx.globalAlpha = 1;
+    }
+
+    function renderRedFlash(timer) {
+        if (timer <= 0) return;
+        ctx.globalAlpha = Math.min(0.25, timer * 0.8);
+        ctx.fillStyle = '#cc0000';
+        ctx.fillRect(0, 0, CW, CH);
+        ctx.globalAlpha = 1;
+    }
+
     function render(state) {
         ctx.clearRect(0, 0, CW, CH);
-        ctx.drawImage(bgCache, 0, 0);
+
+        // Parallax background
+        renderParallaxBg(state.pendulumAngle);
 
         const ic = state.impactCam;
 
         if (!state.players || state.players.length === 0) {
             renderPlatform(0, CW);
-            renderPendulum(CW / 2, state.pendulumAngle || 0, 0);
-        } else if (state.mode === 'practice' || state.mode === 'debug') {
+            renderPendulum(CW / 2, state.pendulumAngle || 0);
+        } else if (state.mode === 'practice' || state.mode === 'debug' || state.mode === 'survival') {
             const icam = (ic && ic.playerIdx === 0) ? ic : null;
-            renderArena(state.players[0], 0, CW, state.pendulumAngle, icam, 0);
+            renderArena(state.players[0], 0, CW, state.pendulumAngle, icam, state);
         } else if (state.players.length > 1) {
             const ic0 = (ic && ic.playerIdx === 0) ? ic : null;
             const ic1 = (ic && ic.playerIdx === 1) ? ic : null;
-            renderArena(state.players[0], 0, CW / 2, state.pendulumAngle, ic0, 0);
-            renderArena(state.players[1], CW / 2, CW / 2, state.pendulumAngle, ic1, 1);
+            renderArena(state.players[0], 0, CW / 2, state.pendulumAngle, ic0, state);
+            renderArena(state.players[1], CW / 2, CW / 2, state.pendulumAngle, ic1, state);
             renderDivider();
         }
 
         if (state.phase === 'countdown') {
             renderCountdown(state.countdownDisplay);
         }
+
+        // Screen effects
+        const bpmRatio = (state.bpm || 60) / Math.max(1, state.maxBpm || 180);
+        renderVignette(bpmRatio);
+        renderRedFlash(state.redFlashTimer || 0);
 
         // Screen shake
         const shaking = state.shakeTimer > 0 || (ic && (ic.phase === 'impact'));
@@ -542,9 +715,10 @@ const Renderer = (() => {
         }
     }
 
-    function resetRope() {
-        ropePoints = [null, null];
-    }
+    function resetRope() { ropePoints = null; }
 
-    return { init, render, resetRope, addBladeBlood, resetBladeBlood, MAX_ANGLE, PLATFORM_Y, PIVOT_Y, ARM_LEN, CW, CH };
+    return {
+        init, render, resetRope, addBladeBlood, resetBladeBlood, resetEffects,
+        MAX_ANGLE, PLATFORM_Y, PIVOT_Y, ARM_LEN, CW, CH,
+    };
 })();

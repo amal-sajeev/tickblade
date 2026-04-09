@@ -400,6 +400,179 @@ body {
     #results-body { margin-bottom: 12px; }
 }
 
+/* ---- Pause screen ---- */
+#pause-screen {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    background: rgba(6, 6, 18, 0.85);
+    z-index: 20;
+}
+
+.pause-title {
+    font-size: 24px;
+    color: var(--accent);
+    margin-bottom: 24px;
+    letter-spacing: 4px;
+}
+
+/* ---- Difficulty screen ---- */
+#difficulty-screen {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    background: rgba(6, 6, 18, 0.92);
+    z-index: 10;
+}
+
+.difficulty-title {
+    font-size: 16px;
+    color: var(--accent);
+    margin-bottom: 20px;
+    letter-spacing: 3px;
+}
+
+.btn-diff {
+    min-width: 180px;
+}
+
+.btn-diff-selected {
+    border-color: var(--accent) !important;
+    color: var(--accent) !important;
+    background: #1a1a40 !important;
+}
+
+.mutators {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 16px;
+    font-size: 8px;
+}
+
+.mutator-toggle {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #999;
+    cursor: pointer;
+    letter-spacing: 1px;
+}
+
+.mutator-toggle input[type="checkbox"] {
+    accent-color: var(--accent);
+    width: 14px;
+    height: 14px;
+}
+
+/* Practice options */
+#practice-options {
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid #333;
+    min-width: 280px;
+}
+
+.practice-option-title {
+    font-size: 8px;
+    color: var(--accent-dim);
+    letter-spacing: 2px;
+    text-align: center;
+    margin-bottom: 10px;
+}
+
+/* ---- Settings screen ---- */
+#settings-screen {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: center;
+    background: rgba(6, 6, 18, 0.92);
+    z-index: 10;
+}
+
+.settings-title {
+    font-size: 16px;
+    color: var(--accent);
+    margin-bottom: 20px;
+    letter-spacing: 3px;
+}
+
+.settings-panel {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-width: 280px;
+}
+
+.settings-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.settings-row label {
+    font-size: 8px;
+    color: #999;
+    min-width: 70px;
+    letter-spacing: 1px;
+}
+
+.settings-row input[type="range"] {
+    flex: 1;
+    accent-color: var(--accent);
+    height: 14px;
+}
+
+.settings-row span {
+    font-size: 8px;
+    color: var(--accent);
+    min-width: 36px;
+    text-align: right;
+}
+
+/* ---- Tutorial overlay ---- */
+#tutorial-overlay {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    justify-content: center;
+    align-items: flex-end;
+    padding-bottom: 40px;
+    background: rgba(0, 0, 0, 0.5);
+    z-index: 25;
+}
+
+.tutorial-box {
+    background: var(--panel);
+    border: 2px solid var(--border);
+    border-radius: 6px;
+    padding: 16px 24px;
+    text-align: center;
+    max-width: 400px;
+}
+
+.tutorial-text {
+    font-size: 10px;
+    color: var(--text);
+    line-height: 2;
+    margin-bottom: 12px;
+}
+
+.tutorial-btns {
+    display: flex;
+    gap: 12px;
+    justify-content: center;
+}
+
 /* ---- Debug mode ---- */
 .btn-debug-menu {
     background: rgba(140, 30, 30, 0.6);
@@ -563,11 +736,43 @@ body {
     border-top: 1px solid #442222;
 }
 
+/* ---- Series info on results ---- */
+.series-info {
+    width: 100%;
+    text-align: center;
+    font-size: 9px;
+    color: var(--accent-dim);
+    margin-top: 12px;
+    letter-spacing: 1px;
+}
+
 /* Touch device hints */
 @media (pointer: coarse) {
     .controls-hint-keyboard { display: none; }
     .controls-hint-touch { display: block; }
+
+    .btn {
+        min-height: 44px;
+        font-size: 11px;
+    }
+
+    .btn-small {
+        min-height: 40px;
+    }
 }
 @media (pointer: fine) {
     .controls-hint-touch { display: none; }
+}
+
+/* Portrait mode hint */
+@media (orientation: portrait) and (max-width: 600px) {
+    #game-container {
+        width: 100vw;
+        max-height: 60vh;
+    }
+
+    .title { font-size: 20px; }
+    .subtitle { font-size: 7px; margin-bottom: 16px; }
+    .menu-buttons { gap: 8px; }
+    .btn { font-size: 10px; padding: 10px 16px; min-width: 180px; }
 }

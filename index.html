@@ -51,8 +51,10 @@
             <p class="subtitle">Pendulum Rhythm Battle</p>
             <div class="menu-buttons">
                 <button class="btn" id="btn-practice">PRACTICE</button>
+                <button class="btn" id="btn-survival">SURVIVAL</button>
                 <button class="btn" id="btn-local">LOCAL 1v1</button>
                 <button class="btn" id="btn-online">ONLINE 1v1</button>
+                <button class="btn btn-small" id="btn-settings">SETTINGS</button>
                 <button class="btn btn-debug-menu hidden" id="btn-debug-mode">DEBUG MODE</button>
             </div>
             <div class="controls-hint">
@@ -91,6 +93,86 @@
             <div class="menu-buttons">
                 <button class="btn" id="btn-play-again">PLAY AGAIN</button>
                 <button class="btn btn-small" id="btn-back-menu">MENU</button>
+            </div>
+        </div>
+
+        <div id="pause-screen" class="hidden">
+            <h2 class="pause-title">PAUSED</h2>
+            <div class="menu-buttons">
+                <button class="btn" id="btn-resume">RESUME</button>
+                <button class="btn btn-small" id="btn-pause-quit">QUIT TO MENU</button>
+            </div>
+        </div>
+
+        <div id="difficulty-screen" class="hidden">
+            <h2 class="difficulty-title">SELECT DIFFICULTY</h2>
+            <div class="menu-buttons">
+                <button class="btn btn-diff" id="btn-diff-easy">EASY</button>
+                <button class="btn btn-diff btn-diff-selected" id="btn-diff-normal">NORMAL</button>
+                <button class="btn btn-diff" id="btn-diff-hard">HARD</button>
+            </div>
+            <div id="practice-options" class="hidden">
+                <div class="practice-option-title">PRACTICE OPTIONS</div>
+                <div class="settings-row">
+                    <label>BPM</label>
+                    <input type="range" id="diff-bpm" min="30" max="240" value="60" step="5">
+                    <span id="diff-bpm-val">60</span>
+                </div>
+                <div class="settings-row">
+                    <label>Lock BPM</label>
+                    <button class="btn btn-debug" id="diff-lock-bpm">OFF</button>
+                </div>
+            </div>
+            <div class="mutators">
+                <label class="mutator-toggle"><input type="checkbox" id="mut-onehit"> One-Hit KO</label>
+                <label class="mutator-toggle"><input type="checkbox" id="mut-doubleramp"> Double Ramp</label>
+                <label class="mutator-toggle"><input type="checkbox" id="mut-invisible"> Invisible Blade</label>
+            </div>
+            <div class="menu-buttons" style="margin-top:12px">
+                <button class="btn" id="btn-diff-start">START</button>
+                <button class="btn btn-small" id="btn-diff-back">BACK</button>
+            </div>
+        </div>
+
+        <div id="settings-screen" class="hidden">
+            <h2 class="settings-title">SETTINGS</h2>
+            <div class="settings-panel">
+                <div class="settings-row">
+                    <label>Master</label>
+                    <input type="range" id="set-master" min="0" max="100" value="100">
+                    <span id="set-master-val">100%</span>
+                </div>
+                <div class="settings-row">
+                    <label>SFX</label>
+                    <input type="range" id="set-sfx" min="0" max="100" value="100">
+                    <span id="set-sfx-val">100%</span>
+                </div>
+                <div class="settings-row">
+                    <label>Music</label>
+                    <input type="range" id="set-music" min="0" max="100" value="50">
+                    <span id="set-music-val">50%</span>
+                </div>
+                <div class="settings-row">
+                    <label>Screen Shake</label>
+                    <button class="btn btn-debug" id="set-shake">ON</button>
+                </div>
+                <div class="settings-row">
+                    <label>Camera Sway</label>
+                    <button class="btn btn-debug" id="set-camera">ON</button>
+                </div>
+            </div>
+            <div class="menu-buttons" style="margin-top:16px">
+                <button class="btn btn-small" id="btn-settings-back">BACK</button>
+            </div>
+        </div>
+
+        <div id="tutorial-overlay" class="hidden">
+            <div class="tutorial-box">
+                <div class="tutorial-text" id="tutorial-text"></div>
+                <div class="tutorial-btns">
+                    <button class="btn btn-small" id="btn-tutorial-next">NEXT</button>
+                    <button class="btn btn-small" id="btn-tutorial-skip">SKIP</button>
+                </div>
             </div>
         </div>
 
