@@ -63,6 +63,7 @@
             <p class="subtitle">Pendulum Rhythm Battle</p>
             <div class="menu-buttons">
                 <button class="btn" id="btn-classic">CLASSIC</button>
+                <button class="btn" id="btn-leaderboards">LEADERBOARDS</button>
                 <button class="btn" id="btn-survival">SURVIVAL</button>
                 <button class="btn" id="btn-local">LOCAL 1v1</button>
                 <button class="btn" id="btn-online">ONLINE 1v1</button>
@@ -77,6 +78,39 @@
                 <div class="controls-hint-touch">
                     <p>TAP anywhere to jump</p>
                 </div>
+            </div>
+        </div>
+
+        <div id="character-select-screen" class="hidden">
+            <h2 class="character-select-title" id="character-select-title">SELECT CHARACTER</h2>
+            <p class="character-select-note" id="char-select-note">CHOOSE YOUR HERO.</p>
+            <div class="character-select-grid">
+                <section class="character-card" id="char-card-p1">
+                    <div class="character-slot">P1</div>
+                    <div class="character-name" id="char-name-p1">KNIGHT</div>
+                    <canvas class="character-preview" id="char-preview-p1" width="160" height="96"></canvas>
+                    <div class="character-note" id="char-note-p1">knight_blue</div>
+                    <div class="character-controls" id="char-controls-p1">
+                        <button class="btn btn-small char-nav" id="char-p1-prev">PREV</button>
+                        <button class="btn btn-small char-nav" id="char-p1-next">NEXT</button>
+                    </div>
+                </section>
+                <div class="character-wrap hidden" id="char-p2-wrap">
+                    <section class="character-card" id="char-card-p2">
+                        <div class="character-slot">P2</div>
+                        <div class="character-name" id="char-name-p2">KNIGHT</div>
+                        <canvas class="character-preview" id="char-preview-p2" width="160" height="96"></canvas>
+                        <div class="character-note" id="char-note-p2">knight_red</div>
+                        <div class="character-controls" id="char-controls-p2">
+                            <button class="btn btn-small char-nav" id="char-p2-prev">PREV</button>
+                            <button class="btn btn-small char-nav" id="char-p2-next">NEXT</button>
+                        </div>
+                    </section>
+                </div>
+            </div>
+            <div class="menu-buttons character-actions">
+                <button class="btn" id="btn-character-start">START</button>
+                <button class="btn btn-small" id="btn-character-back">BACK</button>
             </div>
         </div>
 
@@ -102,9 +136,29 @@
         <div id="results-screen" class="hidden">
             <h2 class="results-title" id="results-title">GAME OVER</h2>
             <div id="results-body"></div>
+            <div id="classic-entry-panel" class="hidden">
+                <div class="classic-entry-title">ENTER NAME</div>
+                <div class="classic-entry-note" id="classic-entry-note">NEW HIGH SCORE</div>
+                <input type="text" id="classic-name-input" class="classic-name-input" maxlength="6" spellcheck="false" autocomplete="off" placeholder="AAAAAA">
+                <div class="classic-entry-btns">
+                    <button class="btn" id="btn-classic-submit">SUBMIT</button>
+                    <button class="btn btn-small" id="btn-classic-skip">SKIP</button>
+                </div>
+            </div>
+            <div id="classic-leaderboard-panel" class="hidden">
+                <div id="classic-leaderboard-body"></div>
+            </div>
             <div class="menu-buttons">
                 <button class="btn" id="btn-play-again">PLAY AGAIN</button>
                 <button class="btn btn-small" id="btn-back-menu">MENU</button>
+            </div>
+        </div>
+
+        <div id="leaderboard-screen" class="hidden">
+            <h2 class="results-title">LEADERBOARDS</h2>
+            <div id="leaderboard-body"></div>
+            <div class="menu-buttons">
+                <button class="btn btn-small" id="btn-leaderboard-back">BACK</button>
             </div>
         </div>
 

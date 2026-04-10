@@ -362,7 +362,7 @@ const Renderer = (() => {
     }
 
     function renderCharacter(player, arenaX, arenaW) {
-        const palette = player.index === 0 ? 'blue' : 'red';
+        const palette = player.spriteVariant || (player.index === 0 ? 'knight_blue' : 'knight_red');
         const state = player.hitTimer > 0 ? 'hit' : (player.isJumping ? 'jump' : 'idle');
         const size = Sprites.spriteSize(state);
         const cx = arenaX + arenaW / 2;

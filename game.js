@@ -41,6 +41,17 @@ const Game = (() => {
     // ---- Survival ----
     let survivalStartTime = 0;
     let gameOverPlayed = false;
+    let classicPendingEntry = null;
+    let pendingResults = null;
+    let resultsRevealAt = 0;
+    let characterSelectMode = null;
+    let characterSelectSlot = 0;
+    let characterPreviewRaf = null;
+    let characterSelections = { p1: 'knight', p2: 'knight' };
+    let onlineRemoteSelections = { p1: 'knight', p2: 'knight' };
+    let onlineLocalReady = false;
+    let onlinePeerReady = false;
+    let onlineMatchStartPending = false;
 
     // ---- Difficulty ----
     let selectedDifficulty = 'normal';
@@ -95,6 +106,12 @@ const Game = (() => {
         ragdoll: null, particles: [], splatters: [], hitApplied: false,
     };
 
+    const CHARACTER_IDS = ['knight', 'peppers'];
+    const CHARACTER_META = {
+        knight: { label: 'KNIGHT', p1: 'knight_blue', p2: 'knight_red' },
+        peppers: { label: 'PEPPERS', p1: 'pepper_orange', p2: 'pepper_blue' },
+    };
+
     const $ = (id) => document.getElementById(id);
 
     function makePlayer(idx) {
@@ -105,10 +122,35 @@ const Game = (() => {
             judgmentText: '', judgmentTimer: 0, hitTimer: 0, bloodSpurt: [],
             emote: null, emoteTimer: 0,
             shield: false, shieldTimer: 0, doublePoints: 0,
+            spriteVariant: null,
         };
     }
 
     function isClassicMode() { return mode === 'classic'; }
+
+    function normalizeCharacterId(id) {
+        return CHARACTER_META[id] ? id : 'knight';
+    }
+
+    function characterLabel(id) {
+        return CHARACTER_META[normalizeCharacterId(id)].label;
+    }
+
+    function characterVariant(id, slotKey) {
+        const meta = CHARACTER_META[normalizeCharacterId(id)];
+        return slotKey === 'p2' ? meta.p2 : meta.p1;
+    }
+
+    function slotKeyFromIndex(idx) {
+        return idx === 1 ? 'p2' : 'p1';
+    }
+
+    function getLocalSlotKey() {
+        if (characterSelectMode === 'online') {
+            return MP.isHost ? 'p1' : 'p2';
+        }
+        return slotKeyFromIndex(localPlayerIdx);
+    }
 
     // ---- Pendulum phase offset ----
     const BLADE_HALF = 32;
@@ -177,7 +219,7 @@ const Game = (() => {
     // ---- UI helpers ----
     function showScreen(name) {
         ['menu-screen', 'lobby-screen', 'results-screen', 'hud', 'debug-hud',
-         'classic-hud', 'pause-screen', 'difficulty-screen', 'settings-screen', 'tutorial-overlay'].forEach((id) => {
+         'classic-hud', 'leaderboard-screen', 'character-select-screen', 'pause-screen', 'difficulty-screen', 'settings-screen', 'tutorial-overlay'].forEach((id) => {
             $(id).classList.add('hidden');
         });
         if (name) $(name).classList.remove('hidden');
@@ -203,6 +245,150 @@ const Game = (() => {
             $('diff-bpm').value = classicBpm;
             $('diff-bpm-val').textContent = classicBpm;
         }
+    }
+
+    function selectedCharacterForSlot(slotKey) {
+        return normalizeCharacterId(characterSelections[slotKey] || onlineRemoteSelections[slotKey] || 'knight');
+    }
+
+    function setCharacterForSlot(slotKey, delta) {
+        const current = selectedCharacterForSlot(slotKey);
+        const idx = CHARACTER_IDS.indexOf(current);
+        const next = CHARACTER_IDS[(idx + delta + CHARACTER_IDS.length) % CHARACTER_IDS.length];
+        characterSelections[slotKey] = next;
+        if (characterSelectMode === 'online' && slotKey === getLocalSlotKey()) {
+            onlineLocalReady = false;
+            MP.send({ type: 'character', slot: slotKey, character: next, ready: false });
+        }
+        renderCharacterSelect();
+    }
+
+    function renderCharacterPreview(canvasId, slotKey, characterId) {
+        const canvas = $(canvasId);
+        if (!canvas) return;
+        const ctx = canvas.getContext('2d');
+        const variant = characterVariant(characterId, slotKey);
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        ctx.imageSmoothingEnabled = false;
+        const frame = Sprites.previewFrame(variant);
+        const size = Sprites.spriteSize('idle');
+        const scale = Math.min((canvas.width - 16) / size.w, (canvas.height - 16) / size.h);
+        const dw = Math.round(size.w * scale);
+        const dh = Math.round(size.h * scale);
+        const dx = Math.round((canvas.width - dw) / 2);
+        const dy = Math.round((canvas.height - dh) / 2);
+        ctx.drawImage(frame, dx, dy, dw, dh);
+    }
+
+    function renderCharacterSelect() {
+        const p1Id = selectedCharacterForSlot('p1');
+        const p2Id = selectedCharacterForSlot('p2');
+        $('char-name-p1').textContent = characterLabel(p1Id);
+        $('char-name-p2').textContent = characterLabel(p2Id);
+        $('char-note-p1').textContent = characterVariant(p1Id, 'p1');
+        $('char-note-p2').textContent = characterVariant(p2Id, 'p2');
+
+        renderCharacterPreview('char-preview-p1', 'p1', p1Id);
+        renderCharacterPreview('char-preview-p2', 'p2', p2Id);
+
+        const showP2 = characterSelectMode === 'local' || characterSelectMode === 'online';
+        $('char-card-p2').classList.toggle('hidden', !showP2);
+        $('char-controls-p2').classList.toggle('hidden', !showP2);
+        $('char-card-p1').classList.remove('hidden');
+        $('char-controls-p1').classList.remove('hidden');
+
+        const online = characterSelectMode === 'online';
+        const localSlotKey = getLocalSlotKey();
+        $('char-controls-p1').classList.toggle('locked', online && localSlotKey !== 'p1');
+        $('char-controls-p2').classList.toggle('locked', online && localSlotKey !== 'p2');
+        $('char-p1-prev').disabled = online && localSlotKey !== 'p1';
+        $('char-p1-next').disabled = online && localSlotKey !== 'p1';
+        $('char-p2-prev').disabled = online && localSlotKey !== 'p2';
+        $('char-p2-next').disabled = online && localSlotKey !== 'p2';
+
+        if (online) {
+            if (onlineLocalReady && onlinePeerReady) {
+                $('char-select-note').textContent = 'READY TO START.';
+            } else if (onlineLocalReady) {
+                $('char-select-note').textContent = 'WAITING FOR OPPONENT...';
+            } else if (onlinePeerReady) {
+                $('char-select-note').textContent = 'OPPONENT READY. READY UP.';
+            } else {
+                $('char-select-note').textContent = 'PICK YOUR CHARACTER AND READY UP.';
+            }
+        } else {
+            $('char-select-note').textContent = 'CHOOSE YOUR HERO.';
+        }
+        $('btn-character-start').textContent = online
+            ? (onlineLocalReady ? 'UNREADY' : 'READY')
+            : 'START';
+        $('btn-character-start').disabled = false;
+    }
+
+    function startCharacterPreviewLoop() {
+        stopCharacterPreviewLoop();
+        const tick = () => {
+            if ($('character-select-screen').classList.contains('hidden')) return;
+            renderCharacterSelect();
+            characterPreviewRaf = requestAnimationFrame(tick);
+        };
+        characterPreviewRaf = requestAnimationFrame(tick);
+    }
+
+    function stopCharacterPreviewLoop() {
+        if (characterPreviewRaf) cancelAnimationFrame(characterPreviewRaf);
+        characterPreviewRaf = null;
+    }
+
+    function showCharacterSelect(gameMode) {
+        pendingMode = gameMode;
+        characterSelectMode = gameMode;
+        characterSelectSlot = 0;
+        if (gameMode === 'online') {
+            onlineLocalReady = false;
+            onlinePeerReady = false;
+            onlineMatchStartPending = false;
+            onlineRemoteSelections = { p1: 'knight', p2: 'knight' };
+            const remoteSlotKey = getLocalSlotKey() === 'p1' ? 'p2' : 'p1';
+            characterSelections[remoteSlotKey] = 'knight';
+        }
+        $('character-select-title').textContent = 'SELECT CHARACTER';
+        $('char-p2-wrap').classList.toggle('hidden', gameMode !== 'local' && gameMode !== 'online');
+        $('char-select-note').textContent = 'CHOOSE YOUR HERO.';
+        showScreen('character-select-screen');
+        renderCharacterSelect();
+        syncOnlineCharacterState();
+        startCharacterPreviewLoop();
+    }
+
+    function exitCharacterSelect() {
+        characterSelectMode = null;
+        stopCharacterPreviewLoop();
+        $('character-select-screen').classList.add('hidden');
+    }
+
+    function maybeStartOnlineMatch() {
+        if (characterSelectMode !== 'online') return;
+        if (!MP.isHost || !onlineLocalReady || !onlinePeerReady) return;
+        if (onlineMatchStartPending) return;
+        onlineMatchStartPending = true;
+        setTimeout(() => {
+            onlineMatchStartPending = false;
+            if (characterSelectMode !== 'online' || !onlineLocalReady || !onlinePeerReady) return;
+            MP.send({ type: 'start', bpm: CFG.START_BPM });
+            beginGame('online');
+        }, 250);
+    }
+
+    function syncOnlineCharacterState() {
+        if (characterSelectMode !== 'online' || !MP.connected()) return;
+        const slotKey = getLocalSlotKey();
+        MP.send({
+            type: 'character',
+            slot: slotKey,
+            character: selectedCharacterForSlot(slotKey),
+            ready: onlineLocalReady,
+        });
     }
 
     function updateHUD() {
@@ -405,7 +591,7 @@ const Game = (() => {
     function endGame(loserIdx) {
         if (phase === 'results' || gameOverPlayed) return;
         gameOverPlayed = true;
-        phase = 'results';
+        phase = 'ending';
         SFX.stopMusic();
 
         let winner = -1;
@@ -422,25 +608,42 @@ const Game = (() => {
             SFX.playGameOver();
         }
         seriesRound++;
+        const titleText = (() => {
+            if (mode === 'survival') return 'GAME OVER';
+            if (mode === 'classic' || mode === 'debug') return 'GAME OVER';
+            if (winner === 0) return 'PLAYER 1 WINS';
+            if (winner === 1) return 'PLAYER 2 WINS';
+            return 'DRAW';
+        })();
+        const elapsed = (gameNow - gameStartTime) / 1000;
+        const currentEntry = mode === 'classic' ? {
+            score: players[0].score,
+            time: elapsed,
+            bpm,
+            date: Date.now(),
+            name: '',
+        } : null;
+        pendingResults = { winner, titleText, elapsed, currentEntry };
+        resultsRevealAt = gameNow + 900;
+
+        if (mode === 'online') {
+            MP.send({ type: 'gameover', winner });
+        }
+    }
+
+    function finalizeGameOver() {
+        if (!pendingResults) return;
+        const { winner, titleText, elapsed, currentEntry } = pendingResults;
+        pendingResults = null;
 
         const title = $('results-title');
+        title.textContent = titleText;
         if (mode === 'survival') {
-            title.textContent = 'GAME OVER';
-            const elapsed = (gameNow - survivalStartTime) / 1000;
             saveSurvivalHighScore(players[0].score, elapsed, bpm);
-        } else if (mode === 'classic' || mode === 'debug') {
-            title.textContent = 'GAME OVER';
-        } else if (winner === 0) {
-            title.textContent = 'PLAYER 1 WINS';
-        } else if (winner === 1) {
-            title.textContent = 'PLAYER 2 WINS';
-        } else {
-            title.textContent = 'DRAW';
         }
 
         let body = '';
         if (mode === 'survival') {
-            const elapsed = (gameNow - survivalStartTime) / 1000;
             const hs = getSurvivalHighScore();
             body += `<div class="result-col">
                 <div class="final-score">${players[0].score}</div>
@@ -450,13 +653,15 @@ const Game = (() => {
                 <div class="stat" style="color:#FFD633">High Score: ${hs.score}</div>
             </div>`;
         } else if (mode === 'classic') {
-            const elapsed = (gameNow - gameStartTime) / 1000;
             body += `<div class="result-col">
                 <div class="final-score">${players[0].score}</div>
                 <div class="stat">Time: ${elapsed.toFixed(1)}s</div>
+                <div class="stat">Points: ${players[0].score}</div>
                 <div class="stat">BPM: ${bpm}</div>
                 <div class="stat">Hits Taken: ${players[0].hits}</div>
             </div>`;
+            classicPendingEntry = currentEntry;
+            showClassicEntryPrompt(currentEntry);
         } else {
             players.forEach((p, i) => {
                 const isWinner = i === winner;
@@ -489,10 +694,6 @@ const Game = (() => {
         }
 
         showScreen('results-screen');
-
-        if (mode === 'online') {
-            MP.send({ type: 'gameover', winner });
-        }
     }
 
     // ---- Survival high score ----
@@ -511,6 +712,154 @@ const Game = (() => {
             if (!raw) return { score: 0, time: 0, bpm: 0 };
             return JSON.parse(raw);
         } catch (e) { return { score: 0, time: 0, bpm: 0 }; }
+    }
+
+    // ---- Classic leaderboard ----
+    const CLASSIC_LB_KEY = 'clocksim_classic_lb';
+    const CLASSIC_LB_MAX = 10;
+
+    function getClassicLeaderboard() {
+        try {
+            const raw = localStorage.getItem(CLASSIC_LB_KEY);
+            const rows = raw ? JSON.parse(raw) : [];
+            if (!Array.isArray(rows)) return [];
+            return rows.filter((row) => row
+                && typeof row.time === 'number'
+                && typeof row.score === 'number'
+                && typeof row.name === 'string');
+        } catch (e) {
+            return [];
+        }
+    }
+
+    function normalizeClassicName(raw) {
+        return String(raw || '')
+            .toUpperCase()
+            .replace(/[^A-Z0-9]/g, '')
+            .slice(0, 6);
+    }
+
+    function dedupeClassicLeaderboard(rows) {
+        const map = new Map();
+        rows.forEach((row) => {
+            const name = normalizeClassicName(row.name);
+            if (!name) return;
+            const candidate = { ...row, name };
+            const existing = map.get(name);
+            if (!existing || candidate.time > existing.time || (candidate.time === existing.time && candidate.score > existing.score)) {
+                map.set(name, candidate);
+            }
+        });
+        return [...map.values()];
+    }
+
+    function sortClassicLeaderboard(rows) {
+        return rows.sort((a, b) => {
+            if (b.time !== a.time) return b.time - a.time;
+            if (b.score !== a.score) return b.score - a.score;
+            return (a.date || 0) - (b.date || 0);
+        });
+    }
+
+    function saveClassicLeaderboardEntry(entry) {
+        try {
+            const name = normalizeClassicName(entry.name);
+            if (!name) return { saved: false, leaderboard: getClassicLeaderboard() };
+
+            const rows = dedupeClassicLeaderboard(getClassicLeaderboard());
+            const current = { ...entry, name };
+            const existingIndex = rows.findIndex((row) => row.name === name);
+            const sortedBefore = sortClassicLeaderboard([...rows]);
+            const qualifies = existingIndex >= 0
+                || sortedBefore.length < CLASSIC_LB_MAX
+                || current.time > sortedBefore[sortedBefore.length - 1].time;
+
+            if (!qualifies) {
+                return { saved: false, leaderboard: sortedBefore.slice(0, CLASSIC_LB_MAX) };
+            }
+
+            if (existingIndex >= 0) {
+                const existing = rows[existingIndex];
+                if (current.time <= existing.time) {
+                    return { saved: false, leaderboard: sortClassicLeaderboard([...rows]).slice(0, CLASSIC_LB_MAX) };
+                }
+                rows[existingIndex] = current;
+            } else {
+                rows.push(current);
+            }
+
+            const trimmed = sortClassicLeaderboard(dedupeClassicLeaderboard(rows)).slice(0, CLASSIC_LB_MAX);
+            localStorage.setItem(CLASSIC_LB_KEY, JSON.stringify(trimmed));
+            return { saved: true, leaderboard: trimmed };
+        } catch (e) { /* ignore */ }
+        return { saved: false, leaderboard: [] };
+    }
+
+    function formatClassicLeaderboardTime(time) {
+        return `${time.toFixed(1)}s`;
+    }
+
+    function renderClassicLeaderboard(currentEntry) {
+        const rows = sortClassicLeaderboard(dedupeClassicLeaderboard(getClassicLeaderboard()));
+        let html = '<div class="leaderboard-panel"><div class="leaderboard-title">GLOBAL LEADERBOARD</div>';
+        if (rows.length === 0) {
+            html += '<div class="leaderboard-empty">NO RUNS YET</div>';
+        } else {
+            html += '<div class="leaderboard-head"><span>RANK</span><span>NAME</span><span>TIME</span><span>POINTS</span><span>BPM</span></div>';
+            rows.forEach((row, index) => {
+                const isCurrent = currentEntry
+                    && normalizeClassicName(row.name) === normalizeClassicName(currentEntry.name)
+                    && row.time === currentEntry.time
+                    && row.score === currentEntry.score
+                    && row.bpm === currentEntry.bpm
+                    && row.date === currentEntry.date;
+                html += `<div class="leaderboard-row${isCurrent ? ' leaderboard-current' : ''}">
+                    <span>#${index + 1}</span>
+                    <span>${row.name}</span>
+                    <span>${formatClassicLeaderboardTime(row.time)}</span>
+                    <span>${row.score}</span>
+                    <span>${row.bpm}</span>
+                </div>`;
+            });
+        }
+        html += '</div>';
+        return html;
+    }
+
+    function showClassicEntryPrompt(entry) {
+        classicPendingEntry = entry;
+        $('classic-entry-panel').classList.remove('hidden');
+        $('classic-leaderboard-panel').classList.add('hidden');
+        $('classic-leaderboard-panel').innerHTML = '';
+        $('classic-name-input').value = '';
+        $('classic-entry-note').textContent = 'ENTER 1-6 CHAR NAME. ONLY NEW HIGH SCORES SAVE.';
+        $('btn-classic-submit').classList.remove('hidden');
+        setTimeout(() => {
+            const input = $('classic-name-input');
+            if (input) input.focus();
+        }, 0);
+    }
+
+    function showClassicLeaderboard(entry) {
+        $('classic-entry-panel').classList.add('hidden');
+        const panel = $('classic-leaderboard-panel');
+        panel.innerHTML = renderClassicLeaderboard(entry);
+        panel.classList.remove('hidden');
+    }
+
+    function resetClassicResultsUI() {
+        classicPendingEntry = null;
+        $('classic-entry-panel').classList.add('hidden');
+        $('classic-leaderboard-panel').classList.add('hidden');
+        $('classic-leaderboard-panel').innerHTML = '';
+        $('classic-name-input').value = '';
+        $('classic-entry-note').textContent = 'ENTER 1-6 CHAR NAME. ONLY NEW HIGH SCORES SAVE.';
+        $('btn-classic-submit').classList.remove('hidden');
+    }
+
+    function showGlobalLeaderboard() {
+        $('leaderboard-body').innerHTML = renderClassicLeaderboard(null);
+        showScreen('leaderboard-screen');
     }
 
     // ---- Mini blood spurt for non-fatal hits ----
@@ -795,6 +1144,39 @@ const Game = (() => {
 
         if (impactCam.active) { updateImpactCam(dt, now); return; }
 
+        if (phase === 'ending') {
+            players.forEach((p) => {
+                if (p.isJumping) {
+                    const jElapsed = (now - p.jumpStartTime) / 1000;
+                    const jProgress = jElapsed / CFG.JUMP_DURATION;
+                    if (jProgress >= 1) { p.isJumping = false; p.jumpY = 0; }
+                    else { p.jumpY = CFG.JUMP_HEIGHT * Math.sin(Math.PI * jProgress); }
+                }
+                if (p.judgmentTimer > 0) p.judgmentTimer -= dt;
+                if (p.hitTimer > 0) p.hitTimer -= dt;
+                if (p.emoteTimer > 0) p.emoteTimer -= dt;
+                if (p.emoteTimer <= 0) p.emote = null;
+                if (p.shieldTimer > 0) { p.shieldTimer -= dt; if (p.shieldTimer <= 0) p.shield = false; }
+                if (p.doublePoints > 0) p.doublePoints -= dt;
+                if (p.bloodSpurt.length > 0) {
+                    p.bloodSpurt.forEach(b => {
+                        b.vy += 400 * dt; b.x += b.vx * dt; b.y += b.vy * dt; b.life -= dt * 1.5;
+                    });
+                    p.bloodSpurt = p.bloodSpurt.filter(b => b.life > 0);
+                }
+            });
+
+            if (shakeTimer > 0) shakeTimer -= dt;
+            if (redFlashTimer > 0) redFlashTimer -= dt;
+
+            if (gameNow >= resultsRevealAt) {
+                phase = 'results';
+                finalizeGameOver();
+            }
+            updateHUD();
+            return;
+        }
+
         // Countdown
         if (phase === 'countdown') {
             const elapsed = (now - countdownStartTime) / 1000;
@@ -985,14 +1367,30 @@ const Game = (() => {
     function onRemoteMessage(data) {
         if (data.type === 'peer-connected') {
             if (MP.isHost) {
-                setTimeout(() => {
-                    MP.send({ type: 'start', bpm: CFG.START_BPM });
-                    beginGame('online');
-                }, 500);
+                if (characterSelectMode !== 'online') {
+                    showCharacterSelect('online');
+                } else {
+                    onlinePeerReady = false;
+                    renderCharacterSelect();
+                }
+                syncOnlineCharacterState();
             }
         }
         if (data.type === 'start') {
             beginGame('online');
+        }
+        if (data.type === 'character') {
+            const slotKey = data.slot === 'p2' ? 'p2' : 'p1';
+            const characterId = normalizeCharacterId(data.character);
+            characterSelections[slotKey] = characterId;
+            if (slotKey !== getLocalSlotKey()) {
+                onlineRemoteSelections[slotKey] = characterId;
+                onlinePeerReady = !!data.ready;
+            } else {
+                onlineLocalReady = !!data.ready;
+            }
+            renderCharacterSelect();
+            maybeStartOnlineMatch();
         }
         const remoteIdx = 1 - localPlayerIdx;
         if (data.type === 'action' && players[remoteIdx]) {
@@ -1036,10 +1434,19 @@ const Game = (() => {
     // ---- Game start ----
     function beginGame(gameMode) {
         mode = gameMode;
+        characterSelectMode = null;
+        onlineMatchStartPending = false;
+        stopCharacterPreviewLoop();
+        pendingResults = null;
+        resultsRevealAt = 0;
         localPlayerIdx = (mode === 'online' && !MP.isHost) ? 1 : 0;
         players = [makePlayer(0)];
         if (mode !== 'classic' && mode !== 'debug' && mode !== 'survival') players.push(makePlayer(1));
         if (mode === 'classic') CFG.MAX_HITS = 1;
+        players.forEach((p) => {
+            const slotKey = slotKeyFromIndex(p.index);
+            p.spriteVariant = characterVariant(selectedCharacterForSlot(slotKey), slotKey);
+        });
 
         const p2hud = $('hud-p2');
         p2hud.style.display = isSinglePlayer() ? 'none' : '';
@@ -1134,17 +1541,34 @@ const Game = (() => {
                 startTutorial();
                 return;
             }
-            showModeSetup('classic');
+            showCharacterSelect('classic');
+        });
+
+        $('btn-leaderboards').addEventListener('click', () => {
+            SFX.init();
+            showGlobalLeaderboard();
+        });
+
+        $('classic-name-input').addEventListener('input', (e) => {
+            const normalized = normalizeClassicName(e.target.value);
+            if (e.target.value !== normalized) e.target.value = normalized;
+        });
+
+        $('classic-name-input').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                $('btn-classic-submit').click();
+            }
         });
 
         $('btn-survival').addEventListener('click', () => {
             SFX.init();
-            showModeSetup('survival');
+            showCharacterSelect('survival');
         });
 
         $('btn-local').addEventListener('click', () => {
             SFX.init();
-            showModeSetup('local');
+            showCharacterSelect('local');
         });
 
         $('btn-online').addEventListener('click', () => {
@@ -1197,6 +1621,37 @@ const Game = (() => {
         });
 
         $('btn-diff-back').addEventListener('click', () => {
+            if (pendingMode) showCharacterSelect(pendingMode);
+            else showScreen('menu-screen');
+        });
+
+        $('char-p1-prev').addEventListener('click', () => setCharacterForSlot('p1', -1));
+        $('char-p1-next').addEventListener('click', () => setCharacterForSlot('p1', 1));
+        $('char-p2-prev').addEventListener('click', () => setCharacterForSlot('p2', -1));
+        $('char-p2-next').addEventListener('click', () => setCharacterForSlot('p2', 1));
+
+        $('btn-character-start').addEventListener('click', () => {
+            if (!characterSelectMode) return;
+            if (characterSelectMode === 'online') {
+                onlineLocalReady = !onlineLocalReady;
+                syncOnlineCharacterState();
+                renderCharacterSelect();
+                maybeStartOnlineMatch();
+                return;
+            }
+
+            const nextMode = characterSelectMode;
+            exitCharacterSelect();
+            showModeSetup(nextMode);
+        });
+
+        $('btn-character-back').addEventListener('click', () => {
+            if (characterSelectMode === 'online') {
+                MP.disconnect();
+                phase = 'menu';
+                onlineMatchStartPending = false;
+            }
+            exitCharacterSelect();
             showScreen('menu-screen');
         });
 
@@ -1210,6 +1665,7 @@ const Game = (() => {
                 $('room-code').textContent = code;
                 $('room-code-display').classList.remove('hidden');
                 $('lobby-status').textContent = '';
+                showCharacterSelect('online');
             } catch (err) { $('lobby-status').textContent = 'Failed: ' + err; }
         });
 
@@ -1222,6 +1678,7 @@ const Game = (() => {
             try {
                 await MP.joinRoom(code);
                 $('lobby-status').textContent = 'Connected! Waiting for host...';
+                showCharacterSelect('online');
             } catch (err) { $('lobby-status').textContent = 'Failed: ' + err; }
         });
 
@@ -1231,11 +1688,31 @@ const Game = (() => {
             showScreen('menu-screen');
         });
 
+        $('btn-classic-submit').addEventListener('click', () => {
+            if (!classicPendingEntry) return;
+            const name = normalizeClassicName($('classic-name-input').value);
+            if (!name) {
+                $('classic-entry-note').textContent = 'ENTER 1-6 LETTERS OR NUMBERS.';
+                return;
+            }
+            const entry = { ...classicPendingEntry, name };
+            const result = saveClassicLeaderboardEntry(entry);
+            classicPendingEntry = null;
+            $('classic-entry-note').textContent = result.saved ? 'SAVED TO LEADERBOARD.' : 'NOT A NEW HIGH SCORE.';
+            showClassicLeaderboard(result.saved ? entry : null);
+        });
+
+        $('btn-classic-skip').addEventListener('click', () => {
+            classicPendingEntry = null;
+            showClassicLeaderboard(null);
+        });
+
         $('btn-play-again').addEventListener('click', () => {
             if (seriesRound >= SERIES_MAX && players.length > 1) {
                 seriesWins = [0, 0];
                 seriesRound = 0;
             }
+            resetClassicResultsUI();
             if (mode === 'online') {
                 MP.send({ type: 'start', bpm: CFG.START_BPM });
                 beginGame('online');
@@ -1250,6 +1727,7 @@ const Game = (() => {
             Object.assign(CFG, CFG_DEFAULTS);
             seriesWins = [0, 0];
             seriesRound = 0;
+            resetClassicResultsUI();
             phase = 'menu';
             showScreen('menu-screen');
         });
@@ -1259,6 +1737,7 @@ const Game = (() => {
         $('btn-pause-quit').addEventListener('click', () => {
             SFX.stopMusic();
             Object.assign(CFG, CFG_DEFAULTS);
+            resetClassicResultsUI();
             phase = 'menu';
             showScreen('menu-screen');
         });
@@ -1271,6 +1750,10 @@ const Game = (() => {
         });
 
         $('btn-settings-back').addEventListener('click', () => {
+            showScreen('menu-screen');
+        });
+
+        $('btn-leaderboard-back').addEventListener('click', () => {
             showScreen('menu-screen');
         });
 
@@ -1381,8 +1864,8 @@ const Game = (() => {
         tutorialStep = -1;
         hideOverlay('tutorial-overlay');
         try { localStorage.setItem('clocksim_tutorial_done', '1'); } catch (e) { /* ignore */ }
-        if (pendingMode === 'classic') {
-            showModeSetup('classic');
+        if (pendingMode) {
+            showCharacterSelect(pendingMode);
             return;
         }
         applyDifficulty();

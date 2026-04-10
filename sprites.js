@@ -3,21 +3,37 @@ const Sprites = (() => {
     const ANIM_FPS = 12;
 
     const Palettes = {
-        blue: {
+        knight_blue: {
             helmet: '#4466BB', helmetLight: '#5588DD', helmetDark: '#334499',
             visor: '#FFD633', armor: '#3355AA', armorLight: '#4477CC',
             armorDark: '#2B4488', skin: '#FFCC88', cape: '#2244BB',
             capeDark: '#113399', belt: '#887755', buckle: '#FFD633',
             boots: '#554433', bootsDark: '#332211',
         },
-        red: {
+        knight_red: {
             helmet: '#BB4466', helmetLight: '#DD5588', helmetDark: '#993344',
             visor: '#FFD633', armor: '#AA3355', armorLight: '#CC4477',
             armorDark: '#882B44', skin: '#FFCC88', cape: '#BB2244',
             capeDark: '#991133', belt: '#887755', buckle: '#FFD633',
             boots: '#554433', bootsDark: '#332211',
         },
+        pepper_orange: {
+            helmet: '#FF9A1F', helmetLight: '#FFB54D', helmetDark: '#D87810',
+            visor: '#FFD633', armor: '#E67E00', armorLight: '#FF9E28',
+            armorDark: '#B45F00', skin: '#FFCC88', cape: '#D46B00',
+            capeDark: '#A94F00', belt: '#887755', buckle: '#FFD633',
+            boots: '#6A4420', bootsDark: '#4B2F12',
+        },
+        pepper_blue: {
+            helmet: '#8C52FF', helmetLight: '#AA7CFF', helmetDark: '#6336D1',
+            visor: '#FFD633', armor: '#6C36D6', armorLight: '#8C5FFF',
+            armorDark: '#4D229D', skin: '#FFCC88', cape: '#5E26C7',
+            capeDark: '#3D1590', belt: '#887755', buckle: '#FFD633',
+            boots: '#4C316F', bootsDark: '#2E1D43',
+        },
     };
+    Palettes.blue = Palettes.knight_blue;
+    Palettes.red = Palettes.knight_red;
 
     const W_FALLBACK = 12;
     const H_FALLBACK = 18;
@@ -29,12 +45,14 @@ const Sprites = (() => {
 
     // ---- Spritesheet loading ----
     const SHEET_DEFS = {
-        blue_idle: 'assets/blue_idle.png',
-        blue_jump: 'assets/blue_jump.png',
-        blue_hit:  'assets/blue_hit.png',
-        red_idle:  'assets/red_idle.png',
-        red_jump:  'assets/red_jump.png',
-        red_hit:   'assets/red_hit.png',
+        knight_blue_idle: 'assets/blue_idle.png',
+        knight_blue_jump: 'assets/blue_jump.png',
+        knight_blue_hit:  'assets/blue_hit.png',
+        knight_red_idle:  'assets/red_idle.png',
+        knight_red_jump:  'assets/red_jump.png',
+        knight_red_hit:   'assets/red_hit.png',
+        pepper_orange_idle: 'assets/pepper_orange_idle.png',
+        pepper_blue_idle: 'assets/pepper_blue_idle.png',
     };
 
     function extractFrames(img) {
@@ -214,6 +232,10 @@ const Sprites = (() => {
             const i = (frameIdx || 0) % frameList.length;
             return frameList[i];
         }
+        const idleList = sheets[paletteName + '_idle'];
+        if (idleList && idleList.length > 0) {
+            return idleList[0];
+        }
         if (state === 'hit') {
             return getScaledHitFallback(paletteName);
         }
@@ -272,7 +294,7 @@ const Sprites = (() => {
     }
 
     function spriteSize(state) {
-        const frame = getFrame('blue', state || 'idle', 0);
+        const frame = getFrame('knight_blue', state || 'idle', 0);
         const targetH = getIdleH();
         return {
             w: Math.round(frame.width * (targetH / frame.height)),
@@ -280,5 +302,9 @@ const Sprites = (() => {
         };
     }
 
-    return { draw, spriteSize, frameCount, Palettes, SCALE, W: W_FALLBACK, H: H_FALLBACK };
+    function previewFrame(paletteName) {
+        return getFrame(paletteName, 'idle', 0);
+    }
+
+    return { draw, spriteSize, frameCount, previewFrame, Palettes, SCALE, W: W_FALLBACK, H: H_FALLBACK };
 })();
