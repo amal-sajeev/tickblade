@@ -685,7 +685,7 @@ const Renderer = (() => {
         if (!state.players || state.players.length === 0) {
             renderPlatform(0, CW);
             renderPendulum(CW / 2, state.pendulumAngle || 0);
-        } else if (state.mode === 'practice' || state.mode === 'debug' || state.mode === 'survival') {
+        } else if (state.mode === 'classic' || state.mode === 'debug' || state.mode === 'survival') {
             const icam = (ic && ic.playerIdx === 0) ? ic : null;
             renderArena(state.players[0], 0, CW, state.pendulumAngle, icam, state);
         } else if (state.players.length > 1) {

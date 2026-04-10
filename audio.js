@@ -87,9 +87,9 @@ const SFX = (() => {
         o.stop(t + duration);
     }
 
-    function noise(duration, gainVal, filterFreq, dest) {
+    function noise(duration, gainVal, filterFreq, dest, startTime) {
         ensureCtx();
-        const t = ctx.currentTime;
+        const t = startTime || ctx.currentTime;
         const src = ctx.createBufferSource();
         src.buffer = noiseBuffer;
         const filt = ctx.createBiquadFilter();
@@ -108,6 +108,109 @@ const SFX = (() => {
 
     // Pitch variation helper
     function randDetune() { return (Math.random() - 0.5) * 80; }
+
+    const VOWEL_FORMANTS = {
+        a: { f1: 850, q1: 8, f2: 1200, q2: 7 },
+        e: { f1: 500, q1: 9, f2: 1800, q2: 8 },
+        i: { f1: 300, q1: 10, f2: 2200, q2: 9 },
+        o: { f1: 500, q1: 8, f2: 900, q2: 7 },
+        u: { f1: 350, q1: 8, f2: 700, q2: 7 },
+        er: { f1: 450, q1: 9, f2: 1500, q2: 8 },
+        ah: { f1: 700, q1: 8, f2: 1150, q2: 7 },
+        uh: { f1: 500, q1: 8, f2: 1100, q2: 7 },
+    };
+
+    const CONSONANT_NOISE = {
+        p: 2300, b: 1900, t: 3000, d: 2500, k: 2100, g: 1800,
+        f: 4200, v: 3200, s: 5200, z: 4200, sh: 3600, ch: 3300,
+        m: 900, n: 1200, r: 1500, l: 1300,
+    };
+
+    function getVowelFormants(vowel) {
+        return VOWEL_FORMANTS[vowel] || VOWEL_FORMANTS.a;
+    }
+
+    function playConsonantBurst(consonant, startTime, accent) {
+        if (!consonant) return;
+        const t = startTime;
+        const freq = CONSONANT_NOISE[consonant] || 2400;
+        const gain = 0.04 + 0.04 * (accent || 1);
+        noise(0.03, gain, freq, sfxDest(), t);
+    }
+
+    function playVoiceChunk(chunk, startTime) {
+        ensureCtx();
+        const t = startTime || ctx.currentTime;
+        const duration = chunk.duration || 0.14;
+        const pitch = chunk.pitch || 170;
+        const accent = chunk.accent || 1;
+        const vowel = chunk.vowel || 'a';
+        const glide = chunk.glide == null ? 0.06 : chunk.glide;
+        const formants = getVowelFormants(vowel);
+
+        playConsonantBurst(chunk.consonant, t, accent);
+
+        const carrier = ctx.createOscillator();
+        carrier.type = 'sawtooth';
+        carrier.frequency.setValueAtTime(pitch, t);
+        carrier.frequency.exponentialRampToValueAtTime(pitch * (1 + glide), t + duration * 0.7);
+
+        const voiceFilter = ctx.createBiquadFilter();
+        voiceFilter.type = 'bandpass';
+        voiceFilter.frequency.value = formants.f1;
+        voiceFilter.Q.value = formants.q1;
+
+        const voiceFilter2 = ctx.createBiquadFilter();
+        voiceFilter2.type = 'bandpass';
+        voiceFilter2.frequency.value = formants.f2;
+        voiceFilter2.Q.value = formants.q2;
+
+        const voiceGain = ctx.createGain();
+        voiceGain.gain.setValueAtTime(0.0001, t);
+        voiceGain.gain.linearRampToValueAtTime(0.42 * accent, t + 0.015);
+        voiceGain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+
+        const voiceBlend = ctx.createGain();
+        voiceBlend.gain.value = 0.85;
+
+        carrier.connect(voiceFilter);
+        carrier.connect(voiceFilter2);
+        voiceFilter.connect(voiceBlend);
+        voiceFilter2.connect(voiceBlend);
+        voiceBlend.connect(voiceGain);
+        voiceGain.connect(sfxDest());
+        carrier.start(t);
+        carrier.stop(t + duration);
+
+        const breath = ctx.createBiquadFilter();
+        breath.type = 'bandpass';
+        breath.frequency.value = formants.f2;
+        breath.Q.value = formants.q2;
+
+        const supportGain = ctx.createGain();
+        supportGain.gain.setValueAtTime(0.0001, t);
+        supportGain.gain.linearRampToValueAtTime(0.14 * accent, t + 0.01);
+        supportGain.gain.exponentialRampToValueAtTime(0.001, t + duration);
+
+        const support = ctx.createOscillator();
+        support.type = 'triangle';
+        support.frequency.setValueAtTime(pitch * 1.98, t);
+        support.frequency.exponentialRampToValueAtTime(pitch * 2.05, t + duration * 0.7);
+        support.connect(breath);
+        breath.connect(supportGain);
+        supportGain.connect(sfxDest());
+        support.start(t);
+        support.stop(t + duration);
+    }
+
+    function playRetroPhrase(chunks, gap) {
+        ensureCtx();
+        const start = ctx.currentTime;
+        const step = gap == null ? 0.065 : gap;
+        chunks.forEach((chunk, i) => {
+            playVoiceChunk(chunk, start + i * step);
+        });
+    }
 
     function playTick() {
         osc(800, 'sine', 0.06, 0.25);
@@ -160,8 +263,8 @@ const SFX = (() => {
     function playGameOver() {
         ensureCtx();
         const t = ctx.currentTime;
-        [400, 350, 300, 200].forEach((f, i) => {
-            osc(f, 'square', 0.25, 0.15, t + i * 0.2);
+        [420, 360, 300, 220].forEach((f, i) => {
+            osc(f, 'square', 0.18, 0.15, t + i * 0.12);
         });
     }
 
@@ -200,11 +303,12 @@ const SFX = (() => {
     }
 
     function playAnnouncerGameOver() {
-        ensureCtx();
-        const t = ctx.currentTime;
-        [600, 500, 400, 250, 150].forEach((f, i) => {
-            osc(f, 'square', 0.2, 0.12, t + i * 0.15);
-        });
+        playRetroPhrase([
+            { consonant: 'g', vowel: 'a', pitch: 170, duration: 0.2, accent: 1.15, glide: -0.03 },
+            { consonant: 'm', vowel: 'e', pitch: 150, duration: 0.18, accent: 1.05, glide: -0.04 },
+            { consonant: 'v', vowel: 'o', pitch: 130, duration: 0.2, accent: 1.0, glide: -0.05 },
+            { consonant: 'r', vowel: 'er', pitch: 114, duration: 0.22, accent: 0.95, glide: -0.07 },
+        ], 0.075);
     }
 
     // ---- Procedural music engine ----

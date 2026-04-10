@@ -56,6 +56,66 @@ body {
 }
 
 /* ---- HUD ---- */
+#classic-hud {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 5;
+}
+
+#classic-timer {
+    position: absolute;
+    top: 10px;
+    left: 12px;
+    font-size: 18px;
+    color: var(--accent);
+    text-shadow: 0 0 12px rgba(255, 204, 51, 0.25);
+    letter-spacing: 2px;
+}
+
+#classic-combo {
+    position: absolute;
+    top: 40px;
+    left: 12px;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    color: #d0d0ff;
+}
+
+.classic-combo-label {
+    font-size: 8px;
+    color: #888;
+    letter-spacing: 2px;
+}
+
+.classic-combo-value {
+    font-size: 12px;
+    color: var(--green);
+}
+
+#classic-points {
+    position: absolute;
+    top: 10px;
+    right: 12px;
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    color: #d0d0ff;
+    justify-content: flex-end;
+}
+
+.classic-points-label {
+    font-size: 8px;
+    color: #888;
+    letter-spacing: 2px;
+}
+
+.classic-points-value {
+    font-size: 12px;
+    color: var(--text);
+}
+
 #hud {
     position: absolute;
     top: 0;
@@ -472,14 +532,14 @@ body {
 }
 
 /* Practice options */
-#practice-options {
+#classic-options {
     margin-top: 12px;
     padding-top: 10px;
     border-top: 1px solid #333;
     min-width: 280px;
 }
 
-.practice-option-title {
+.classic-option-title {
     font-size: 8px;
     color: var(--accent-dim);
     letter-spacing: 2px;

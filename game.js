@@ -40,6 +40,7 @@ const Game = (() => {
 
     // ---- Survival ----
     let survivalStartTime = 0;
+    let gameOverPlayed = false;
 
     // ---- Difficulty ----
     let selectedDifficulty = 'normal';
@@ -50,8 +51,7 @@ const Game = (() => {
         hard:   { START_BPM: 80, MAX_BPM: 220, PERFECT_WINDOW: 0.05, GOOD_WINDOW: 0.07, MAX_HITS: 2, BPM_STEP: 8 },
     };
     let mutators = { oneHitKO: false, doubleRamp: false, invisibleBlade: false };
-    let practiceBpm = 60;
-    let practiceBpmLock = false;
+    let classicBpm = 60;
 
     // ---- Rematch / best-of-3 ----
     let seriesWins = [0, 0];
@@ -107,6 +107,8 @@ const Game = (() => {
             shield: false, shieldTimer: 0, doublePoints: 0,
         };
     }
+
+    function isClassicMode() { return mode === 'classic'; }
 
     // ---- Pendulum phase offset ----
     const BLADE_HALF = 32;
@@ -175,7 +177,7 @@ const Game = (() => {
     // ---- UI helpers ----
     function showScreen(name) {
         ['menu-screen', 'lobby-screen', 'results-screen', 'hud', 'debug-hud',
-         'pause-screen', 'difficulty-screen', 'settings-screen', 'tutorial-overlay'].forEach((id) => {
+         'classic-hud', 'pause-screen', 'difficulty-screen', 'settings-screen', 'tutorial-overlay'].forEach((id) => {
             $(id).classList.add('hidden');
         });
         if (name) $(name).classList.remove('hidden');
@@ -185,7 +187,33 @@ const Game = (() => {
         $(name).classList.add('hidden');
     }
 
+    function showModeSetup(gameMode) {
+        pendingMode = gameMode;
+        showScreen('difficulty-screen');
+        $('difficulty-title').textContent = gameMode === 'classic' ? 'CLASSIC MODE' : 'SELECT DIFFICULTY';
+        const showClassic = gameMode === 'classic';
+        $('classic-options').classList.toggle('hidden', !showClassic);
+        const mutatorsEl = document.querySelector('.mutators');
+        if (mutatorsEl) mutatorsEl.classList.toggle('hidden', showClassic);
+        ['easy', 'normal', 'hard'].forEach((d) => {
+            $('btn-diff-' + d).classList.toggle('hidden', showClassic);
+        });
+        updateDifficultyUI();
+        if (showClassic) {
+            $('diff-bpm').value = classicBpm;
+            $('diff-bpm-val').textContent = classicBpm;
+        }
+    }
+
     function updateHUD() {
+        if (isClassicMode()) {
+            const elapsedMs = phase === 'playing' ? Math.max(0, gameNow - gameStartTime) : 0;
+            $('classic-timer').textContent = formatClassicTime(elapsedMs);
+            $('classic-combo-value').textContent = players[0] ? players[0].combo : 0;
+            $('classic-points-value').textContent = players[0] ? players[0].score : 0;
+            return;
+        }
+
         players.forEach((p, i) => {
             const n = i + 1;
             $('score-p' + n).textContent = p.score;
@@ -204,6 +232,17 @@ const Game = (() => {
             else if (p.streak > 1) streakText = p.streak + 'x STREAK';
             streakEl.textContent = streakText;
         });
+    }
+
+    function formatClassicTime(elapsedMs) {
+        const totalTenths = Math.floor(elapsedMs / 100);
+        const tenths = totalTenths % 10;
+        const totalSeconds = Math.floor(totalTenths / 10);
+        const seconds = totalSeconds % 60;
+        const minutes = Math.floor(totalSeconds / 60);
+        const mm = String(minutes).padStart(2, '0');
+        const ss = String(seconds).padStart(2, '0');
+        return `${mm}:${ss}.${tenths}`;
     }
 
     // ---- Scoring helpers ----
@@ -235,10 +274,16 @@ const Game = (() => {
         let judgment;
         if (offsetSec <= CFG.PERFECT_WINDOW) {
             judgment = 'PERFECT';
-            p.combo++;
-            p.score += 2 * p.combo * scoreBase(p);
+            if (!isClassicMode()) {
+                p.combo++;
+                p.score += 2 * p.combo * scoreBase(p);
+                SFX.playPerfect(p.combo);
+            } else {
+                p.combo++;
+                p.score += 2;
+                SFX.playAnnouncerPerfect();
+            }
             p.streak++;
-            SFX.playPerfect(p.combo);
             if (p.combo >= 5 && p.combo > lastStreakAnnounce) {
                 SFX.playAnnouncerStreak();
                 lastStreakAnnounce = p.combo;
@@ -246,7 +291,7 @@ const Game = (() => {
         } else {
             judgment = 'GOOD';
             p.combo = 0;
-            p.score += 1 * scoreBase(p);
+            p.score += isClassicMode() ? 1 : 1 * scoreBase(p);
             p.streak++;
         }
 
@@ -274,6 +319,21 @@ const Game = (() => {
 
     function applyHit(p, beatIdx) {
         if (isDebugInvincible()) return;
+        if (isClassicMode()) {
+            p.hits++;
+            p.streak = 0;
+            p.combo = 0;
+            p.judgmentText = 'MISS';
+            p.judgmentTimer = 1.0;
+            SFX.playHit();
+            Renderer.addBladeBlood();
+            redFlashTimer = 0.3;
+            haptic(50);
+            if (p.hits >= CFG.MAX_HITS) {
+                endGame(p.index);
+            }
+            return;
+        }
         if (p.shield) {
             p.shield = false;
             p.shieldTimer = 0;
@@ -343,6 +403,8 @@ const Game = (() => {
     }
 
     function endGame(loserIdx) {
+        if (phase === 'results' || gameOverPlayed) return;
+        gameOverPlayed = true;
         phase = 'results';
         SFX.stopMusic();
 
@@ -358,7 +420,6 @@ const Game = (() => {
             seriesWins[winner]++;
         } else {
             SFX.playGameOver();
-            SFX.playAnnouncerGameOver();
         }
         seriesRound++;
 
@@ -367,7 +428,7 @@ const Game = (() => {
             title.textContent = 'GAME OVER';
             const elapsed = (gameNow - survivalStartTime) / 1000;
             saveSurvivalHighScore(players[0].score, elapsed, bpm);
-        } else if (mode === 'practice' || mode === 'debug') {
+        } else if (mode === 'classic' || mode === 'debug') {
             title.textContent = 'GAME OVER';
         } else if (winner === 0) {
             title.textContent = 'PLAYER 1 WINS';
@@ -387,6 +448,14 @@ const Game = (() => {
                 <div class="stat">Final BPM: ${bpm}</div>
                 <div class="stat">Best Combo: ${players[0].bestStreak > 1 ? players[0].bestStreak + 'x' : '-'}</div>
                 <div class="stat" style="color:#FFD633">High Score: ${hs.score}</div>
+            </div>`;
+        } else if (mode === 'classic') {
+            const elapsed = (gameNow - gameStartTime) / 1000;
+            body += `<div class="result-col">
+                <div class="final-score">${players[0].score}</div>
+                <div class="stat">Time: ${elapsed.toFixed(1)}s</div>
+                <div class="stat">BPM: ${bpm}</div>
+                <div class="stat">Hits Taken: ${players[0].hits}</div>
             </div>`;
         } else {
             players.forEach((p, i) => {
@@ -465,7 +534,7 @@ const Game = (() => {
     }
 
     function isSinglePlayer() {
-        return mode === 'practice' || mode === 'debug' || mode === 'survival';
+        return mode === 'classic' || mode === 'debug' || mode === 'survival';
     }
 
     // ---- Impact cam system ----
@@ -617,7 +686,7 @@ const Game = (() => {
 
     // ---- Power-ups ----
     function spawnPowerUp(beatIdx) {
-        if (mode === 'online') return;
+        if (mode === 'online' || isClassicMode()) return;
         if (beatIdx - lastPowerUpBeat < POWERUP_INTERVAL) return;
         if (Math.random() > 0.4) return;
 
@@ -637,6 +706,7 @@ const Game = (() => {
     }
 
     function updatePowerUps(dt) {
+        if (isClassicMode()) return;
         for (let i = powerUps.length - 1; i >= 0; i--) {
             const pu = powerUps[i];
             pu.life -= dt;
@@ -663,6 +733,7 @@ const Game = (() => {
     }
 
     function collectPowerUp(player, pu) {
+        if (isClassicMode()) return;
         switch (pu.type) {
             case 'shield':
                 player.shield = true;
@@ -694,7 +765,7 @@ const Game = (() => {
         countdownStartTime = gameNow;
         countdownDisplay = '';
         computePendulumLead();
-        showScreen('hud');
+        showScreen(isClassicMode() ? 'classic-hud' : 'hud');
         if (mode === 'debug') showDebugHUD();
         updateHUD();
     }
@@ -715,6 +786,7 @@ const Game = (() => {
         lastPowerUpBeat = 0;
         pendulumPattern = 'normal';
         patternStartBeat = 0;
+        updateHUD();
     }
 
     // ---- Update ----
@@ -796,7 +868,7 @@ const Game = (() => {
             }
 
             // Power-up spawning
-            spawnPowerUp(currentBeatInt);
+            if (!isClassicMode()) spawnPowerUp(currentBeatInt);
         }
 
         // Safety net
@@ -806,27 +878,29 @@ const Game = (() => {
             if (checkWin()) return;
         }
 
-        // BPM ramp
-        const maxBpm = mode === 'survival' ? Infinity : CFG.MAX_BPM;
-        if (currentBeatInt > 0 && currentBeatInt % CFG.BEATS_PER_LEVEL === 0) {
-            const step = mutators.doubleRamp ? CFG.BPM_STEP * 2 : CFG.BPM_STEP;
-            const expectedBpm = CFG.START_BPM + (currentBeatInt / CFG.BEATS_PER_LEVEL) * step;
-            if (bpm < expectedBpm && bpm < maxBpm) {
-                addBpmSegment(currentBeatInt, Math.min(expectedBpm, maxBpm));
+        if (!isClassicMode()) {
+            // BPM ramp
+            const maxBpm = mode === 'survival' ? Infinity : CFG.MAX_BPM;
+            if (currentBeatInt > 0 && currentBeatInt % CFG.BEATS_PER_LEVEL === 0) {
+                const step = mutators.doubleRamp ? CFG.BPM_STEP * 2 : CFG.BPM_STEP;
+                const expectedBpm = CFG.START_BPM + (currentBeatInt / CFG.BEATS_PER_LEVEL) * step;
+                if (bpm < expectedBpm && bpm < maxBpm) {
+                    addBpmSegment(currentBeatInt, Math.min(expectedBpm, maxBpm));
+                }
+            }
+
+            // Variable pendulum pattern switching at high BPM
+            if (bpm >= 140 && currentBeatInt > 0 && currentBeatInt % 16 === 0 && pendulumPattern === 'normal') {
+                const patterns = ['double', 'syncopation', 'pause'];
+                pendulumPattern = patterns[Math.floor(Math.random() * patterns.length)];
+                patternStartBeat = currentBeatInt;
+            } else if (pendulumPattern !== 'normal' && currentBeatInt - patternStartBeat >= 8) {
+                pendulumPattern = 'normal';
             }
         }
 
-        // Variable pendulum pattern switching at high BPM
-        if (bpm >= 140 && currentBeatInt > 0 && currentBeatInt % 16 === 0 && pendulumPattern === 'normal') {
-            const patterns = ['double', 'syncopation', 'pause'];
-            pendulumPattern = patterns[Math.floor(Math.random() * patterns.length)];
-            patternStartBeat = currentBeatInt;
-        } else if (pendulumPattern !== 'normal' && currentBeatInt - patternStartBeat >= 8) {
-            pendulumPattern = 'normal';
-        }
-
         // Power-ups update
-        updatePowerUps(dt);
+        if (!isClassicMode()) updatePowerUps(dt);
 
         // Update player animations
         players.forEach((p) => {
@@ -879,7 +953,7 @@ const Game = (() => {
             countdownDisplay, shakeTimer: settings.shakeEnabled ? shakeTimer : 0,
             redFlashTimer,
             invisibleBlade: mutators.invisibleBlade && bpm > 120,
-            powerUps,
+            powerUps: isClassicMode() ? [] : powerUps,
             impactCam: impactCam.active ? {
                 playerIdx: impactCam.playerIdx, phase: impactCam.phase,
                 zoom: impactCam.zoom, ragdoll: impactCam.ragdoll,
@@ -964,7 +1038,8 @@ const Game = (() => {
         mode = gameMode;
         localPlayerIdx = (mode === 'online' && !MP.isHost) ? 1 : 0;
         players = [makePlayer(0)];
-        if (mode !== 'practice' && mode !== 'debug' && mode !== 'survival') players.push(makePlayer(1));
+        if (mode !== 'classic' && mode !== 'debug' && mode !== 'survival') players.push(makePlayer(1));
+        if (mode === 'classic') CFG.MAX_HITS = 1;
 
         const p2hud = $('hud-p2');
         p2hud.style.display = isSinglePlayer() ? 'none' : '';
@@ -985,6 +1060,7 @@ const Game = (() => {
         bpm = CFG.START_BPM;
         bpmSegments = [{ startBeat: 0, bpm, startTime: 0 }];
         $('bpm-display').textContent = bpm + ' BPM';
+        gameOverPlayed = false;
 
         startCountdown();
     }
@@ -1051,37 +1127,24 @@ const Game = (() => {
     // ---- Menu wiring ----
     function setupMenus() {
         // Difficulty flow: clicking Practice/Local/Survival shows difficulty screen
-        function startWithDifficulty(gameMode) {
-            pendingMode = gameMode;
-            showScreen('difficulty-screen');
-            updateDifficultyUI();
-            const showPractice = gameMode === 'practice';
-            $('practice-options').classList.toggle('hidden', !showPractice);
-            if (showPractice) {
-                $('diff-bpm').value = practiceBpm;
-                $('diff-bpm-val').textContent = practiceBpm;
-                $('diff-lock-bpm').textContent = practiceBpmLock ? 'ON' : 'OFF';
-                $('diff-lock-bpm').style.color = practiceBpmLock ? '#44dd66' : '#888';
-            }
-        }
-
-        $('btn-practice').addEventListener('click', () => {
+        $('btn-classic').addEventListener('click', () => {
             SFX.init();
             if (shouldShowTutorial()) {
+                pendingMode = 'classic';
                 startTutorial();
                 return;
             }
-            startWithDifficulty('practice');
+            showModeSetup('classic');
         });
 
         $('btn-survival').addEventListener('click', () => {
             SFX.init();
-            startWithDifficulty('survival');
+            showModeSetup('survival');
         });
 
         $('btn-local').addEventListener('click', () => {
             SFX.init();
-            startWithDifficulty('local');
+            showModeSetup('local');
         });
 
         $('btn-online').addEventListener('click', () => {
@@ -1100,8 +1163,8 @@ const Game = (() => {
                 // Sync BPM slider to the preset's starting BPM
                 const preset = DIFFICULTY_PRESETS[d];
                 const presetBpm = preset.START_BPM || CFG_DEFAULTS.START_BPM;
-                if (!$('practice-options').classList.contains('hidden')) {
-                    practiceBpm = presetBpm;
+                if (!$('classic-options').classList.contains('hidden')) {
+                    classicBpm = presetBpm;
                     $('diff-bpm').value = presetBpm;
                     $('diff-bpm-val').textContent = presetBpm;
                 }
@@ -1109,24 +1172,24 @@ const Game = (() => {
         });
 
         $('diff-bpm').addEventListener('input', (e) => {
-            practiceBpm = parseInt(e.target.value, 10);
-            $('diff-bpm-val').textContent = practiceBpm;
-        });
-
-        $('diff-lock-bpm').addEventListener('click', () => {
-            practiceBpmLock = !practiceBpmLock;
-            $('diff-lock-bpm').textContent = practiceBpmLock ? 'ON' : 'OFF';
-            $('diff-lock-bpm').style.color = practiceBpmLock ? '#44dd66' : '#888';
+            classicBpm = parseInt(e.target.value, 10);
+            $('diff-bpm-val').textContent = classicBpm;
         });
 
         $('btn-diff-start').addEventListener('click', () => {
-            mutators.oneHitKO = $('mut-onehit').checked;
-            mutators.doubleRamp = $('mut-doubleramp').checked;
-            mutators.invisibleBlade = $('mut-invisible').checked;
-            applyDifficulty();
-            if (pendingMode === 'practice') {
-                CFG.START_BPM = practiceBpm;
-                if (practiceBpmLock) CFG.MAX_BPM = practiceBpm;
+            if (pendingMode === 'classic') {
+                mutators.oneHitKO = false;
+                mutators.doubleRamp = false;
+                mutators.invisibleBlade = false;
+                Object.assign(CFG, CFG_DEFAULTS);
+                CFG.MAX_HITS = 1;
+                CFG.START_BPM = classicBpm;
+                CFG.MAX_BPM = classicBpm;
+            } else {
+                mutators.oneHitKO = $('mut-onehit').checked;
+                mutators.doubleRamp = $('mut-doubleramp').checked;
+                mutators.invisibleBlade = $('mut-invisible').checked;
+                applyDifficulty();
             }
             seriesWins = [0, 0];
             seriesRound = 0;
@@ -1284,7 +1347,7 @@ const Game = (() => {
     const TUTORIAL_STEPS = [
         'The blade swings like a pendulum.\nDodge it by jumping at the right time!',
         'Press SPACE or tap to jump.\nTry it now!',
-        'Time your jump for PERFECT!\nPERFECTs build combo multipliers.',
+        'Time your jump for PERFECT!\nPERFECT hits score extra points.',
         'Survive as long as you can!\nGood luck!',
     ];
 
@@ -1318,8 +1381,12 @@ const Game = (() => {
         tutorialStep = -1;
         hideOverlay('tutorial-overlay');
         try { localStorage.setItem('clocksim_tutorial_done', '1'); } catch (e) { /* ignore */ }
+        if (pendingMode === 'classic') {
+            showModeSetup('classic');
+            return;
+        }
         applyDifficulty();
-        beginGame('practice');
+        beginGame('classic');
     }
 
     function shouldShowTutorial() {

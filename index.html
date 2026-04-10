@@ -22,6 +22,18 @@
     <div id="game-container">
         <canvas id="game-canvas" width="800" height="500"></canvas>
 
+        <div id="classic-hud" class="hidden">
+            <div id="classic-timer">00:00.0</div>
+            <div id="classic-combo">
+                <span class="classic-combo-label">COMBO</span>
+                <span class="classic-combo-value" id="classic-combo-value">0</span>
+            </div>
+            <div id="classic-points">
+                <span class="classic-points-label">POINTS</span>
+                <span class="classic-points-value" id="classic-points-value">0</span>
+            </div>
+        </div>
+
         <div id="hud" class="hidden">
             <div id="hud-p1" class="hud-side">
                 <div class="player-label">P1</div>
@@ -50,7 +62,7 @@
             <h1 class="title">TICKBLADE</h1>
             <p class="subtitle">Pendulum Rhythm Battle</p>
             <div class="menu-buttons">
-                <button class="btn" id="btn-practice">PRACTICE</button>
+                <button class="btn" id="btn-classic">CLASSIC</button>
                 <button class="btn" id="btn-survival">SURVIVAL</button>
                 <button class="btn" id="btn-local">LOCAL 1v1</button>
                 <button class="btn" id="btn-online">ONLINE 1v1</button>
@@ -105,22 +117,18 @@
         </div>
 
         <div id="difficulty-screen" class="hidden">
-            <h2 class="difficulty-title">SELECT DIFFICULTY</h2>
+            <h2 class="difficulty-title" id="difficulty-title">SELECT DIFFICULTY</h2>
             <div class="menu-buttons">
                 <button class="btn btn-diff" id="btn-diff-easy">EASY</button>
                 <button class="btn btn-diff btn-diff-selected" id="btn-diff-normal">NORMAL</button>
                 <button class="btn btn-diff" id="btn-diff-hard">HARD</button>
             </div>
-            <div id="practice-options" class="hidden">
-                <div class="practice-option-title">PRACTICE OPTIONS</div>
+            <div id="classic-options" class="hidden">
+                <div class="classic-option-title">SELECT BPM</div>
                 <div class="settings-row">
                     <label>BPM</label>
                     <input type="range" id="diff-bpm" min="30" max="240" value="60" step="5">
                     <span id="diff-bpm-val">60</span>
-                </div>
-                <div class="settings-row">
-                    <label>Lock BPM</label>
-                    <button class="btn btn-debug" id="diff-lock-bpm">OFF</button>
                 </div>
             </div>
             <div class="mutators">
