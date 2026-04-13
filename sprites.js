@@ -45,14 +45,20 @@ const Sprites = (() => {
 
     // ---- Spritesheet loading ----
     const SHEET_DEFS = {
-        knight_blue_idle: 'assets/blue_idle.png',
-        knight_blue_jump: 'assets/blue_jump.png',
-        knight_blue_hit:  'assets/blue_hit.png',
-        knight_red_idle:  'assets/red_idle.png',
-        knight_red_jump:  'assets/red_jump.png',
-        knight_red_hit:   'assets/red_hit.png',
-        pepper_orange_idle: 'assets/pepper_orange_idle.png',
-        pepper_blue_idle: 'assets/pepper_blue_idle.png',
+        knight_blue_idle: { src: 'assets/blue_idle.png' },
+        knight_blue_jump: { src: 'assets/blue_jump.png' },
+        knight_blue_hit:  { src: 'assets/blue_hit.png' },
+        knight_red_idle:  { src: 'assets/red_idle.png' },
+        knight_red_jump:  { src: 'assets/red_jump.png' },
+        knight_red_hit:   { src: 'assets/red_hit.png' },
+        pepper_orange_idle: { src: 'assets/pepper_orange_idle.png', frameW: 64 },
+        pepper_orange_jump: { src: 'assets/pepper_orange_jump.png', frameW: 64 },
+        pepper_orange_hit:  { src: 'assets/pepper_orange_hit.png', frameW: 64 },
+        pepper_orange_death: { src: 'assets/pepper_orange_death.png', frameW: 64 },
+        pepper_blue_idle: { src: 'assets/pepper_blue_idle.png', frameW: 64 },
+        pepper_blue_jump: { src: 'assets/pepper_blue_jump.png', frameW: 64 },
+        pepper_blue_hit:  { src: 'assets/pepper_blue_hit.png', frameW: 64 },
+        pepper_blue_death:  { src: 'assets/pepper_blue_death.png', frameW: 64 },
     };
 
     function extractFrames(img) {
@@ -88,23 +94,42 @@ const Sprites = (() => {
         if (start >= 0) runs.push({ x: start, w: w - start });
 
         const frames = runs.filter(r => r.w > 4);
+        if (frames.length === 0) return [];
+
+        const maxW = frames.reduce((m, f) => Math.max(m, f.w), 0);
 
         return frames.map(f => {
             const fc = document.createElement('canvas');
-            fc.width = f.w;
+            fc.width = maxW;
             fc.height = h;
-            fc.getContext('2d').drawImage(img, f.x, 0, f.w, h, 0, 0, f.w, h);
+            const offsetX = Math.floor((maxW - f.w) / 2);
+            fc.getContext('2d').drawImage(img, f.x, 0, f.w, h, offsetX, 0, f.w, h);
             return fc;
         });
+    }
+
+    function extractGridFrames(img, frameW) {
+        const count = Math.floor(img.width / frameW);
+        if (count <= 0) return [];
+
+        const frames = [];
+        for (let i = 0; i < count; i++) {
+            const fc = document.createElement('canvas');
+            fc.width = frameW;
+            fc.height = img.height;
+            fc.getContext('2d').drawImage(img, i * frameW, 0, frameW, img.height, 0, 0, frameW, img.height);
+            frames.push(fc);
+        }
+        return frames;
     }
 
     function loadAllSheets() {
         const entries = Object.entries(SHEET_DEFS);
         let loaded = 0;
-        entries.forEach(([key, src]) => {
+        entries.forEach(([key, def]) => {
             const img = new Image();
             img.onload = () => {
-                sheets[key] = extractFrames(img);
+                sheets[key] = def.frameW ? extractGridFrames(img, def.frameW) : extractFrames(img);
                 loaded++;
                 if (loaded === entries.length) sheetsReady = true;
             };
@@ -113,7 +138,7 @@ const Sprites = (() => {
                 loaded++;
                 if (loaded === entries.length) sheetsReady = true;
             };
-            img.src = src;
+            img.src = def.src;
         });
     }
 
@@ -225,7 +250,16 @@ const Sprites = (() => {
         return f && f.length ? f[0].height : H_FALLBACK * SCALE_FALLBACK;
     }
 
+    function resolveState(paletteName, state) {
+        const key = paletteName + '_' + state;
+        const frameList = sheets[key];
+        if (frameList && frameList.length > 0) return state;
+        if (state === 'death') return 'hit';
+        return state;
+    }
+
     function getFrame(paletteName, state, frameIdx) {
+        state = resolveState(paletteName, state);
         const key = paletteName + '_' + state;
         const frameList = sheets[key];
         if (frameList && frameList.length > 0) {
@@ -262,6 +296,7 @@ const Sprites = (() => {
     }
 
     function frameCount(paletteName, state) {
+        state = resolveState(paletteName, state);
         const key = paletteName + '_' + state;
         const frameList = sheets[key];
         if (frameList && frameList.length > 0) return frameList.length;
@@ -274,7 +309,7 @@ const Sprites = (() => {
         let frameIdx;
         if (state === 'jump' && totalFrames > 1 && jumpProgress != null) {
             frameIdx = Math.min(totalFrames - 1, Math.floor(jumpProgress * totalFrames));
-        } else if (state === 'hit' && totalFrames > 1 && hitProgress != null) {
+        } else if ((state === 'hit' || state === 'death') && totalFrames > 1 && hitProgress != null) {
             frameIdx = Math.min(totalFrames - 1, Math.floor(hitProgress * totalFrames));
         } else {
             frameIdx = totalFrames > 1
@@ -293,8 +328,10 @@ const Sprites = (() => {
         ctx.drawImage(frame, x, y, displayW, displayH);
     }
 
-    function spriteSize(state) {
-        const frame = getFrame('knight_blue', state || 'idle', 0);
+    function spriteSize(paletteNameOrState, stateMaybe, frameIdxMaybe) {
+        const paletteName = stateMaybe == null ? 'knight_blue' : (paletteNameOrState || 'knight_blue');
+        const state = stateMaybe == null ? (paletteNameOrState || 'idle') : (stateMaybe || 'idle');
+        const frame = getFrame(paletteName, state, frameIdxMaybe || 0);
         const targetH = getIdleH();
         return {
             w: Math.round(frame.width * (targetH / frame.height)),

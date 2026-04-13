@@ -157,7 +157,7 @@ const Game = (() => {
     let pendulumLead = 0;
 
     function computePendulumLead() {
-        const charHalf = Sprites.spriteSize('idle').w / 2;
+        const charHalf = Sprites.spriteSize('knight_blue', 'idle').w / 2;
         const contactDist = BLADE_HALF + charHalf;
         const ratio = Math.min(1, contactDist / Renderer.ARM_LEN);
         const contactAngle = Math.asin(ratio);
@@ -271,7 +271,7 @@ const Game = (() => {
         ctx.clearRect(0, 0, canvas.width, canvas.height);
         ctx.imageSmoothingEnabled = false;
         const frame = Sprites.previewFrame(variant);
-        const size = Sprites.spriteSize('idle');
+        const size = Sprites.spriteSize(variant, 'idle');
         const scale = Math.min((canvas.width - 16) / size.w, (canvas.height - 16) / size.h);
         const dw = Math.round(size.w * scale);
         const dh = Math.round(size.h * scale);
@@ -867,7 +867,8 @@ const Game = (() => {
         const arenaW = isSinglePlayer() ? Renderer.CW : Renderer.CW / 2;
         const arenaX = (player.index === 1) ? Renderer.CW / 2 : 0;
         const cx = arenaX + arenaW / 2;
-        const charSize = Sprites.spriteSize('idle');
+        const variant = player.spriteVariant || (player.index === 0 ? 'knight_blue' : 'knight_red');
+        const charSize = Sprites.spriteSize(variant, 'idle');
         const originX = cx;
         const originY = Renderer.PLATFORM_Y - charSize.h * 0.4;
         for (let i = 0; i < 8; i++) {
@@ -943,7 +944,8 @@ const Game = (() => {
         const arenaW = isSinglePlayer() ? Renderer.CW : Renderer.CW / 2;
         const arenaX = (impactCam.playerIdx === 1) ? Renderer.CW / 2 : 0;
         const cx = arenaX + arenaW / 2;
-        const charSize = Sprites.spriteSize('hit');
+        const variant = players[impactCam.playerIdx].spriteVariant || (impactCam.playerIdx === 0 ? 'knight_blue' : 'knight_red');
+        const charSize = Sprites.spriteSize(variant, 'death');
         const bladeDir = impactCam.startAngle >= 0 ? 1 : -1;
         const slideDir = -bladeDir;
 
@@ -951,7 +953,7 @@ const Game = (() => {
             x: cx - charSize.w / 2, y: Renderer.PLATFORM_Y - charSize.h,
             vx: slideDir * (140 + Math.random() * 60), vy: -(200 + Math.random() * 80),
             rotation: 0, vr: 0, w: charSize.w, h: charSize.h,
-            palette: impactCam.playerIdx === 0 ? 'blue' : 'red',
+            palette: variant, state: 'death',
             onGround: false, sliding: false, slideDir, hitProgress: 0,
             slideSpeed: 0, trail: [], trailTimer: 0,
         };

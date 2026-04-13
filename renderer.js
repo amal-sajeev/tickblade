@@ -364,7 +364,7 @@ const Renderer = (() => {
     function renderCharacter(player, arenaX, arenaW) {
         const palette = player.spriteVariant || (player.index === 0 ? 'knight_blue' : 'knight_red');
         const state = player.hitTimer > 0 ? 'hit' : (player.isJumping ? 'jump' : 'idle');
-        const size = Sprites.spriteSize(state);
+        const size = Sprites.spriteSize(palette, state);
         const cx = arenaX + arenaW / 2;
         const charX = cx - size.w / 2;
         const baseY = PLATFORM_Y - size.h;
@@ -570,7 +570,7 @@ const Renderer = (() => {
         const flipX = r.slideDir && r.slideDir < 0 ? -1 : 1;
         if (flipX < 0) ctx.scale(-1, 1);
 
-        Sprites.draw(ctx, -r.w / 2, -r.h / 2, r.palette, 'hit', undefined, undefined, r.hitProgress != null ? r.hitProgress : 1.0);
+        Sprites.draw(ctx, -r.w / 2, -r.h / 2, r.palette, r.state || 'hit', undefined, undefined, r.hitProgress != null ? r.hitProgress : 1.0);
         ctx.restore();
     }
 
